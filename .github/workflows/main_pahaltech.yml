@@ -24,7 +24,7 @@ jobs:
           java-version: '17'
           distribution: 'microsoft'
 
-      - name: Build with Maven
+      - name: Build with Gradle
         run: ./gradlew bootJar
 
       - name: Upload artifact for deployment job
