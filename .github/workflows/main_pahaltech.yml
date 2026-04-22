@@ -23,9 +23,13 @@ jobs:
         with:
           java-version: '17'
           distribution: 'microsoft'
+          cache: 'gradle'
 
       - name: Build with Gradle
         run: ./gradlew bootJar
+
+      - name: Make graduation executable
+        run: chmod +x ./gradlew
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
