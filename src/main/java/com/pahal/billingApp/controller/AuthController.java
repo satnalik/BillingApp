@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
 
+
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -28,8 +29,9 @@ public class AuthController {
             User userData = user.get();
             if (userData.getPassword().equals(request.getPassword()) && userData.getEmail().equals(request.getEmail())) {
                 String userTenantId = userData.getTenantId();
-                jwtService.generateToken(request.getEmail(), userTenantId);
-                return new ResponseEntity<>("User login successful",HttpStatus.OK);
+                String token = jwtService.generateToken(request.getEmail(), userTenantId);
+//                return new ResponseEntity<>("User login successful",HttpStatus.OK);
+                return ResponseEntity.ok(Collections.singletonMap("token", token));
 
 
             }
