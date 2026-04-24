@@ -1,9 +1,15 @@
 package com.pahal.billingApp.controller;
 
 import com.pahal.billingApp.dto.LoginRequest;
+import com.pahal.billingApp.entity.User;
+import com.pahal.billingApp.repository.UserRepository;
 import com.pahal.billingApp.service.JwtService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -12,13 +18,25 @@ public class AuthController {
     @Autowired
     private JwtService jwtService;
 
-    @PostMapping("/login")
-    public String login(@RequestBody LoginRequest request) {
-        // 1. In a real app, verify email/password against Azure DB
-        // 2. Fetch the user's assigned tenantId
-        String mockTenantId = "Bankura_Store";
+    @Autowired
+    private UserRepository userRepository;
 
-        // 3. Return the token containing the tenantId
-        return jwtService.generateToken(request.getEmail(), mockTenantId);
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+        Optional<User> user = userRepository.findByEmail(request.getEmail());
+        if (user.isPresent()) {
+            User userData = user.get();
+            if (userData.getPassword().equals(request.getPassword()) && userData.getEmail().equals(request.getEmail())) {
+                String userTenantId = userData.getTenantId();
+                jwtService.generateToken(request.getEmail(), userTenantId);
+                return new ResponseEntity<>("User login successful",HttpStatus.OK);
+
+
+            }
+        }
+        return new ResponseEntity<>("Invalid Email or Password", HttpStatus.NOT_FOUND);
+
     }
+
+
 }
