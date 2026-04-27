@@ -22,6 +22,7 @@ public class SecurityConfig {
                 .cors(Customizer.withDefaults())
                 .csrf(csrf -> csrf.disable()) // Disable for development
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll() // ALLOW OPTIONS
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/salesman/**").authenticated()// Allow Login/Signup
                         .anyRequest().authenticated()

@@ -30,7 +30,10 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                .allowedOrigins("http://localhost:5173") // Allow your local Vite server
+                .allowedOrigins(
+                        "https://gray-ocean-0590f7600.7.azurestaticapps.net",
+                        "http://localhost:5173"
+                ) // Allow your local Vite server
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
