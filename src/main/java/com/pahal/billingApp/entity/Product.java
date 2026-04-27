@@ -46,4 +46,5 @@ public class Product {
             this.tenantId = currentTenant;
         }
     }
+
 }

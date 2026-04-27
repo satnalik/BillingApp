@@ -33,10 +33,11 @@ public class PdfGeneratorService {
             document.add(new Paragraph("Customer: " + bill.getCustomerName()));
             document.add(new Paragraph("Contact: " + bill.getContactInfo()));
             document.add(new Paragraph("Date: " + bill.getCreatedAt().toString()));
+            document.add(new Paragraph("SalesMan: " + bill.getSalesMan().getName()+"("+bill.getSalesMan().getEmployeeId()+")"));
             document.add(Chunk.NEWLINE);
 
             // 3. Create Table for Items
-            PdfPTable table = new PdfPTable(3); // 3 columns
+            PdfPTable table = new PdfPTable(4); // 5 columns
             table.setWidthPercentage(100);
             table.addCell("Product");
             table.addCell("Quantity");
@@ -50,6 +51,16 @@ public class PdfGeneratorService {
                 table.addCell(String.valueOf(item.getPriceAtSale()));
             }
             document.add(table);
+
+            document.add(Chunk.NEWLINE);
+            PdfPTable taxtable = new PdfPTable(2); // 5 columns
+            taxtable.setWidthPercentage(20);
+            taxtable.setHorizontalAlignment(Element.ALIGN_RIGHT);
+            taxtable.addCell("SGST");
+            taxtable.addCell("9%");
+            taxtable.addCell("CGST");
+            taxtable.addCell("9%");
+            document.add(taxtable);
 
             // 4. Total
             document.add(Chunk.NEWLINE);

@@ -7,6 +7,8 @@ import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -24,8 +26,14 @@ public class Bill {
 
     private String customerName;
     private String contactInfo;
+
+    @ManyToOne
+    @JoinColumn(name = "salesman_employee_id", referencedColumnName = "employee_id")
+    private Salesman salesMan;
+
     private Double totalAmount;
     private LocalDateTime createdAt;
+
 
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;
@@ -34,6 +42,8 @@ public class Bill {
     @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JoinColumn(name = "bill_id")
     private List<BillItem> items;
+
+
 
     @PrePersist
     public void onPrePersist() {
