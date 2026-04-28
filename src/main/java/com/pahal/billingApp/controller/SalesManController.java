@@ -22,7 +22,7 @@ public class SalesManController {
     @Autowired
     private SalesManService salesManService;
 
-    @PostMapping
+    @PostMapping(path = "/addsalesman")
     public ResponseEntity<?> addNewSalesMan(@RequestBody Salesman salesman){
         salesManService.addNewSalesMan(salesman);
         return  new ResponseEntity<>("SalesMan created successfully. Employee_ID is: "+salesman.getEmployeeId(), HttpStatus.OK);

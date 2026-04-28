@@ -1,6 +1,7 @@
 package com.pahal.billingApp.service;
 
 
+import com.pahal.billingApp.enums.Role;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
@@ -23,13 +24,18 @@ public class JwtService {
         return (String) extractClaim(token, (Function<Claims, Object>) claims -> claims.get("tenantId", String.class));
     }
 
-    public String generateToken(String email, String tenantId) {
+    // Add this to extract the role back out during request filtering
+    public String extractRole(String token) {
+        return (String) extractClaim(token, (Function<Claims, Object>) claims -> claims.get("role", String.class));
+    }
+
+    public String generateToken(String userId, String tenantId, Role userRole) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("tenantId", tenantId); // This is the magic link
-
+        claims.put("role", userRole);
         return Jwts.builder()
                 .setClaims(claims)
-                .setSubject(email)
+                .setSubject(userId)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
                 .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60 * 10)) // 10 hours
                 .signWith(getSigningKey(), SignatureAlgorithm.HS256)

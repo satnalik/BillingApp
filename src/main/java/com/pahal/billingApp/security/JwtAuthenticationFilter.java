@@ -31,16 +31,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
-        final String userEmail;
+        final String userId;
 
         String path = request.getServletPath();
 
-        // 1. If the path is /api/auth/login or /api/auth/register, SKIP the JWT check
+        // 1. Skip filter for Auth endpoints
         if (path.contains("/api/auth/")) {
             filterChain.doFilter(request, response);
             return;
         }
-        // 1. Check for valid Authorization header
+
+        // 2. Check for valid Authorization header
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
@@ -48,31 +49,35 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         jwt = authHeader.substring(7);
 
-        // Use the subject (email) from the token
-        // Note: You may need to add extractUsername to your JwtService if it's missing
-        userEmail = jwtService.extractClaim(jwt, io.jsonwebtoken.Claims::getSubject);
+        try {
+            // Extract the userId (Subject) from the token
+            userId = jwtService.extractClaim(jwt, io.jsonwebtoken.Claims::getSubject);
 
-        // 2. Validate and set Security Context
-        if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
+            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                // IMPORTANT: Your CustomUserDetailsService must now load by userId
+                UserDetails userDetails = this.userDetailsService.loadUserByUsername(userId);
 
-            // Using your Service's logic to validate
-            if (isTokenValid(jwt, userDetails)) {
-                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                        userDetails,
-                        null,
-                        userDetails.getAuthorities()
-                );
-                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                if (isTokenValid(jwt, userDetails)) {
+                    // We use userDetails.getAuthorities() - Make sure your UserDetails
+                    // implementation converts your Role enum to SimpleGrantedAuthority("ROLE_" + role)
+                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                            userDetails,
+                            null,
+                            userDetails.getAuthorities()
+                    );
 
-                // This fills the 'Authentication' object for your Controller
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authToken);
+                }
             }
+        } catch (Exception e) {
+            // As a tester, logging the specific error helps diagnose if the token expired or signature failed
+            logger.error("Could not set user authentication in security context", e);
         }
+
         filterChain.doFilter(request, response);
     }
 
-    // Helper to bridge your JwtService with UserDetails
     private boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = jwtService.extractClaim(token, io.jsonwebtoken.Claims::getSubject);
         return (username.equals(userDetails.getUsername()));

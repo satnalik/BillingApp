@@ -1,5 +1,7 @@
 package com.pahal.billingApp.entity;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.pahal.billingApp.enums.Role;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.Filter;
@@ -16,7 +18,13 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String email;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = true)
+    private Role role;
+
+    private String userId;
+
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String password; // Encrypted
 
     @Column(name = "tenant_id")
