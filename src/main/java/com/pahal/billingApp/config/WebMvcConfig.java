@@ -34,7 +34,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "https://gray-ocean-0590f7600.7.azurestaticapps.net",
                         "http://localhost:5173"
                 ) // Allow your local Vite server
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
     }

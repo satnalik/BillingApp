@@ -31,6 +31,26 @@ public class ProductController {
         return productService.addNewProduct(product);
     }
 
+    /**
+     * Fetch a product by barcode (barcode scanning support).
+     * Tenant scoping is enforced by Hibernate filter.
+     */
+    @GetMapping("/barcode/{barcode}")
+    public ResponseEntity<Product> getByBarcode(@PathVariable String barcode) {
+        Product p = productService.getByBarcode(barcode);
+        if (p == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(p);
+    }
+
+    /**
+     * Create or update a product by barcode.
+     * Useful for "scan then add details" inventory flow.
+     */
+    @PostMapping("/barcode")
+    public ResponseEntity<Product> upsertByBarcode(@RequestBody Product product) {
+        return ResponseEntity.ok(productService.upsertByBarcode(product));
+    }
+
     @GetMapping("/search")
     public ResponseEntity<List<Product>> searchProducts(
             @RequestParam String name,

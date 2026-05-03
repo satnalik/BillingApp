@@ -14,6 +14,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @Controller
 @RequestMapping("/api/salesman")
@@ -39,5 +40,23 @@ public class SalesManController {
 
         List<Salesman> list = salesManService.getAllSalesmenByTenant(tenantId);
         return ResponseEntity.ok(list);
+    }
+
+    @PatchMapping("/{employeeId}/active")
+    public ResponseEntity<?> updateActiveStatus(
+            @PathVariable String employeeId,
+            @RequestBody Map<String, Boolean> payload,
+            Authentication authentication
+    ) {
+        if (authentication == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not authenticated");
+        }
+
+        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+        String tenantId = userDetails.getTenantId();
+        boolean active = payload.getOrDefault("active", Boolean.TRUE);
+
+        Salesman updated = salesManService.setActiveStatus(employeeId, tenantId, active);
+        return ResponseEntity.ok(updated);
     }
 }

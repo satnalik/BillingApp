@@ -8,7 +8,10 @@ import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.ParamDef;
 
 @Entity
-@Table(name = "salesmen")
+@Table(name = "salesmen", indexes = {
+        @Index(name = "idx_salesmen_tenant_active", columnList = "tenant_id, active"),
+        @Index(name = "idx_salesmen_tenant_employee", columnList = "tenant_id, employee_id")
+})
 @Data
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class Salesman {

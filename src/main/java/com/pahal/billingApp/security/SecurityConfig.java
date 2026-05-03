@@ -30,7 +30,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/adduser").permitAll()
                         .requestMatchers("/api/bills/**").hasAnyRole("CASHIER", "ADMIN")
-                        .requestMatchers("/api/products/search").hasAnyRole("CASHIER", "ADMIN")
+                        .requestMatchers("/api/products/**").hasAnyRole("CASHIER", "ADMIN")
                         .requestMatchers("/api/salesman/addsalesman").hasAnyRole("ADMIN")// Allow Login/Signup
                         .requestMatchers("/api/salesman").hasAnyRole("CASHIER", "ADMIN")// Allow Login/Signup
                         .requestMatchers("/api/reports/**").hasAnyRole("CASHIER", "ADMIN")

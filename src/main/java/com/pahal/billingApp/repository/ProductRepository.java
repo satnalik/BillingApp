@@ -18,4 +18,6 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     @Query("SELECT p FROM Product p WHERE p.tenantId = :tenantId AND UPPER(p.name) LIKE UPPER(CONCAT('%', :name, '%'))")
     List<Product> searchByNameAndTenant(@Param("name") String name, @Param("tenantId") String tenantId);
+
+    Product findByBarcode(String barcode);
 }

@@ -1,7 +1,10 @@
 package com.pahal.billingApp.entity;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 
 /**
  * This is a "child" entity. It records which product was sold, at what price, and in what quantity at the time of the sale.
@@ -10,14 +13,24 @@ import lombok.Data;
  */
 @Entity
 @Table(name = "bill_items")
-@Data
+@Getter
+@Setter
+@ToString
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class BillItem {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     private String productName;
     private Integer quantity;
+
+    /**
+     * Editable selling price per unit at billing time (can differ from product master price).
+     */
+    private Double unitSellingPrice;
+
     private Double priceAtSale;
     private Double discount;
 
