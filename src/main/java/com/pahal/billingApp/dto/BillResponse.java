@@ -17,6 +17,11 @@ public class BillResponse {
     private String customerName;
     private String contactInfo;
     private Double totalAmount;
+    private Double subTotalAmount;
+    private Boolean gstApplied;
+    private Double gstRate;
+    private Double gstAmount;
+    private Double instantDiscountAmount;
     private LocalDateTime createdAt;
 
     private String tenantId;
@@ -33,7 +38,7 @@ public class BillResponse {
     @Data
     public static class Item {
         private String productName;
-        private Integer quantity;
+        private Double quantity;
         private Double unitSellingPrice;
         private Double discount;
     }

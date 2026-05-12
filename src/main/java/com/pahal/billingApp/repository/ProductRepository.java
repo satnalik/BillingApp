@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
@@ -20,4 +21,6 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> searchByNameAndTenant(@Param("name") String name, @Param("tenantId") String tenantId);
 
     Product findByBarcode(String barcode);
+
+    Optional<Product> findByIdAndTenantId(Long id, String tenantId);
 }

@@ -2,8 +2,10 @@ package com.pahal.billingApp.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.Supplier;
 import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.repository.ProductRepository;
+import com.pahal.billingApp.repository.SupplierRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -28,6 +30,7 @@ class ProductControllerIT {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired ProductRepository productRepository;
+    @Autowired SupplierRepository supplierRepository;
 
     @Test
     void upsertByBarcode_createsThenUpdatesStock() throws Exception {
@@ -40,7 +43,8 @@ class ProductControllerIT {
         create.setName("Dove");
         create.setSellingPrice(10.0);
         create.setPrice(10.0);
-        create.setStockQuantity(5);
+        create.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+        create.setStockQuantity(5.0);
         create.setCategory("FMCG");
 
         mockMvc.perform(
@@ -58,7 +62,8 @@ class ProductControllerIT {
         update.setName("Dove (Updated)");
         update.setSellingPrice(12.5);
         update.setPrice(12.5);
-        update.setStockQuantity(99);
+        update.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+        update.setStockQuantity(99.0);
 
         mockMvc.perform(
                         post("/api/products/barcode")
@@ -82,6 +87,42 @@ class ProductControllerIT {
                         )
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.barcode=='" + barcode + "')]").exists());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void createProduct_linksSupplierById() throws Exception {
+        TenantContext.setCurrentTenant(TENANT);
+        try {
+            Supplier supplier = new Supplier();
+            supplier.setName("ABC Traders");
+            supplier.setSupplierCode("ABC");
+            supplier = supplierRepository.save(supplier);
+
+            Product product = new Product();
+            product.setBarcode("SUP-123456");
+            product.setName("Cotton Shirt");
+            product.setSellingPrice(799.0);
+            product.setPrice(799.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(20.0);
+            product.setCategory("Shirts");
+
+            Supplier supplierRef = new Supplier();
+            supplierRef.setId(supplier.getId());
+            product.setSupplier(supplierRef);
+
+            mockMvc.perform(
+                            post("/api/products")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(product))
+                    )
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").isNumber())
+                    .andExpect(jsonPath("$.supplier.id").value(supplier.getId()))
+                    .andExpect(jsonPath("$.supplierName").value("ABC Traders"));
         } finally {
             TenantContext.clear();
         }

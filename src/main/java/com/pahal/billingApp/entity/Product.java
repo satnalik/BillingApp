@@ -1,6 +1,8 @@
 package com.pahal.billingApp.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.pahal.billingApp.context.TenantContext;
+import com.pahal.billingApp.enums.ItemType;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.Filter;
@@ -10,20 +12,22 @@ import org.hibernate.annotations.ParamDef;
 /**
  * Purpose: This class represents a single item in a store's inventory.
  *
- * The Multi-Tenant Magic: We use Hibernate's @FilterDef and @Filter annotations.
- * These work with the Aspect we just wrote to ensure that if a request comes in for "Store_A," Hibernate automatically appends WHERE tenant_id = 'Store_A' to the SQL query sent to Azure.
+ * The Multi-Tenant Magic: We use Hibernate's @FilterDef and @Filter
+ * annotations.
+ * These work with the Aspect we just wrote to ensure that if a request comes in
+ * for "Store_A," Hibernate automatically appends WHERE tenant_id = 'Store_A' to
+ * the SQL query sent to Azure.
  */
 @Entity
-@Table(
-        name = "products",
-        indexes = {
-                @Index(name = "idx_products_tenant_name", columnList = "tenant_id, name"),
-                @Index(name = "idx_products_tenant_barcode", columnList = "tenant_id, barcode")
-        },
+@Table(name = "products", indexes = {
+        @Index(name = "idx_products_tenant_name", columnList = "tenant_id, name"),
+        @Index(name = "idx_products_tenant_barcode", columnList = "tenant_id, barcode"),
+        @Index(name = "idx_products_tenant_supplier", columnList = "tenant_id, supplier_id")
+},
+        // Unique constraints for the tenant_id and barcode combination
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_products_tenant_barcode", columnNames = {"tenant_id", "barcode"})
-        }
-)
+                @UniqueConstraint(name = "uk_products_tenant_barcode", columnNames = { "tenant_id", "barcode" })
+        })
 @Data // Lombok annotation to generate getters, setters, and toString
 // 1. Define the filter name and the parameter it expects
 @FilterDef(name = "tenantFilter", parameters = @ParamDef(name = "tenantId", type = String.class))
@@ -50,12 +54,21 @@ public class Product {
      */
     private Double price;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private ItemType itemType;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "supplier_id")
+    @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
+    private Supplier supplier;
+
     private String supplierName;
     private Double costPrice;
     private Double landingPrice;
     private Double mrp;
     private Double sellingPrice;
-    private Integer stockQuantity;
+    private Double stockQuantity;
     private String category;
 
     @Column(name = "tenant_id", nullable = false)

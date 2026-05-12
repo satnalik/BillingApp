@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.dto.AddBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillItemRequest;
+import com.pahal.billingApp.dto.CreateBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
 import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.Salesman;
+import com.pahal.billingApp.entity.TenantSettings;
 import com.pahal.billingApp.repository.BillRepository;
 import com.pahal.billingApp.service.BillingService;
 import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SalesManRepository;
+import com.pahal.billingApp.repository.TenantSettingsRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -38,6 +41,7 @@ class BillControllerIT {
     @Autowired ProductRepository productRepository;
     @Autowired SalesManRepository salesManRepository;
     @Autowired BillRepository billRepository;
+    @Autowired TenantSettingsRepository tenantSettingsRepository;
 
     @Test
     void createBill_thenFetchById_includesPaymentsAndBillNumber() throws Exception {
@@ -47,7 +51,8 @@ class BillControllerIT {
         p.setName("Dove");
         p.setSellingPrice(2.0);
         p.setPrice(2.0);
-        p.setStockQuantity(100);
+        p.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+        p.setStockQuantity(100.0);
         TenantContext.setCurrentTenant(TENANT);
         try {
             productRepository.save(p);
@@ -67,7 +72,7 @@ class BillControllerIT {
 
         CreateBillItemRequest item = new CreateBillItemRequest();
         item.setProductName("Dove");
-        item.setQuantity(4);
+        item.setQuantity(4.0);
         item.setDiscount(0.0);
         item.setUnitSellingPrice(2.0);
 
@@ -123,7 +128,8 @@ class BillControllerIT {
             p.setName("Soap");
             p.setSellingPrice(100.0);
             p.setPrice(100.0);
-            p.setStockQuantity(10);
+            p.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            p.setStockQuantity(10.0);
             productRepository.save(p);
 
             Salesman s = new Salesman();
@@ -136,7 +142,7 @@ class BillControllerIT {
 
         CreateBillItemRequest item = new CreateBillItemRequest();
         item.setProductName("Soap");
-        item.setQuantity(1);
+        item.setQuantity(1.0);
         item.setDiscount(0.0);
         item.setUnitSellingPrice(100.0);
 
@@ -197,7 +203,8 @@ class BillControllerIT {
             p.setName("Shampoo");
             p.setSellingPrice(100.0);
             p.setPrice(100.0);
-            p.setStockQuantity(10);
+            p.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            p.setStockQuantity(10.0);
             productRepository.save(p);
 
             Salesman s = new Salesman();
@@ -210,7 +217,7 @@ class BillControllerIT {
 
         CreateBillItemRequest item = new CreateBillItemRequest();
         item.setProductName("Shampoo");
-        item.setQuantity(1);
+        item.setQuantity(1.0);
         item.setDiscount(0.0);
         item.setUnitSellingPrice(100.0);
 
@@ -293,6 +300,77 @@ class BillControllerIT {
             var bill = billRepository.findWithDetailsById(billId).orElseThrow();
             org.junit.jupiter.api.Assertions.assertEquals(0.0, bill.getDueAmount());
             org.junit.jupiter.api.Assertions.assertEquals(118.0, bill.getPaidAmount());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void createBill_withInstantDiscount_reducesTotal_andKeepsCreditDueAsUsual() throws Exception {
+        final String GROCERY_TENANT = "Tenant-Grocery";
+        // Disable GST for this tenant to match grocery flow.
+        TenantSettings settings = new TenantSettings();
+        settings.setTenantId(GROCERY_TENANT);
+        settings.setGstEnabled(false);
+        settings.setGstRate(0.18);
+        tenantSettingsRepository.save(settings);
+
+        // Seed product + salesman for this tenant.
+        TenantContext.setCurrentTenant(GROCERY_TENANT);
+        try {
+            Product p = new Product();
+            p.setBarcode("P4");
+            p.setName("Dha_Ref_oil_1lt");
+            p.setSellingPrice(198.0);
+            p.setPrice(198.0);
+            p.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            p.setStockQuantity(10.0);
+            productRepository.save(p);
+
+            Salesman s = new Salesman();
+            s.setEmployeeId("G1");
+            s.setName("Damu");
+            s.setTenantId(GROCERY_TENANT);
+            salesManRepository.save(s);
+        } finally {
+            TenantContext.clear();
+        }
+
+        CreateBillItemRequest item = new CreateBillItemRequest();
+        item.setProductName("Dha_Ref_oil_1lt");
+        item.setQuantity(1.0);
+        item.setDiscount(0.0);
+        item.setUnitSellingPrice(198.0);
+
+        CreateBillRequest req = new CreateBillRequest();
+        req.setCustomerName("Cust4");
+        req.setContactInfo("111");
+        req.setSalesmanEmployeeId("G1");
+        req.setItems(List.of(item));
+        req.setInstantDiscountAmount(15.0);
+
+        CreateBillPaymentRequest cash = new CreateBillPaymentRequest();
+        cash.setMethod(com.pahal.billingApp.enums.PaymentMethod.CASH);
+        cash.setAmount(183.0);
+
+        req.setPayments(List.of(cash));
+
+        TenantContext.setCurrentTenant(GROCERY_TENANT);
+        try {
+            mockMvc.perform(
+                            post("/api/bills")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(req))
+                    )
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.gstApplied").value(false))
+                    .andExpect(jsonPath("$.subTotalAmount").value(198.0))
+                    .andExpect(jsonPath("$.instantDiscountAmount").value(15.0))
+                    .andExpect(jsonPath("$.totalAmount").value(183.0))
+                    .andExpect(jsonPath("$.paidAmount").value(183.0))
+                    .andExpect(jsonPath("$.dueAmount").value(0.0))
+                    .andExpect(jsonPath("$.payments[?(@.method=='CASH')]").exists())
+                    .andExpect(jsonPath("$.payments[?(@.method=='CREDIT')]").doesNotExist());
         } finally {
             TenantContext.clear();
         }

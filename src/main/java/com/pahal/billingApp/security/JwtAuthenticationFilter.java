@@ -35,8 +35,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String path = request.getServletPath();
 
-        // 1. Skip filter for Auth endpoints
-        if (path.contains("/api/auth/")) {
+        // 1. Skip filter only for public Auth endpoints (login etc.)
+        // NOTE: /api/auth/change-password should be able to read JWT and set principal.
+        if (path.equals("/api/auth/login")) {
             filterChain.doFilter(request, response);
             return;
         }

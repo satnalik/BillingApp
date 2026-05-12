@@ -6,6 +6,10 @@ import com.pahal.billingApp.dto.CreateBillRequest;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.service.BillingService;
 import com.pahal.billingApp.service.PdfGeneratorService;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
@@ -18,6 +22,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/bills")
+@Tag(name = "Billing API", description = "Endpoints for creating bills, adding payments, and generating PDFs")
 public class BillController {
 
     @Autowired
@@ -34,6 +39,7 @@ public class BillController {
      * - Calculates totals
      * - Saves the bill with the tenant_id from the header
      */
+    @Operation(summary = "Create a New Bill", description = "Creates a new bill with the provided details. Validates products, checks stock, and calculates totals.")
     @PostMapping
     public ResponseEntity<BillResponse> createBill(@RequestBody CreateBillRequest request) {
         Bill savedBill = billingService.createBill(request);
@@ -45,6 +51,7 @@ public class BillController {
      * Thanks to our AOP Filter, billRepository.findAll() will
      * only return bills belonging to the X-TenantID header.
      */
+    @Operation(summary = "Get All Bills", description = "Retrieves all bills for the current tenant.")
     @GetMapping
     public List<BillResponse> getAllBills() {
         return billingService.getAllBillsWithDetails()
@@ -56,6 +63,7 @@ public class BillController {
     /**
      * 3. Get a Specific Bill by ID
      */
+    @Operation(summary = "Get Bill by ID", description = "Retrieves a specific bill by its ID. The bill must belong to the current tenant.")
     @GetMapping("/{id}")
     public ResponseEntity<BillResponse> getBillById(@PathVariable Long id) {
         try {
@@ -67,10 +75,13 @@ public class BillController {
     }
 
     /**
-     * Collect due against an existing bill (records payment + negative CREDIT adjustment).
+     * Collect due against an existing bill (records payment + negative CREDIT
+     * adjustment).
      */
+    @Operation(summary = "Add Due Payment", description = "Records a payment for an existing bill and adjusts the due amount.")
     @PostMapping("/{id}/payments")
-    public ResponseEntity<BillResponse> addDuePayment(@PathVariable Long id, @RequestBody AddBillPaymentRequest request) {
+    public ResponseEntity<BillResponse> addDuePayment(@PathVariable Long id,
+            @RequestBody AddBillPaymentRequest request) {
         Bill updated = billingService.addDuePayment(id, request);
         return ResponseEntity.ok(BillResponseMapper.toResponse(updated));
     }
@@ -78,6 +89,7 @@ public class BillController {
     /**
      * 4. Generate and Download PDF for a Bill
      */
+    @Operation(summary = "Download Bill PDF", description = "Generates and downloads the PDF for a specific bill.")
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<InputStreamResource> downloadBillPdf(@PathVariable Long id) {
         // Fetch the bill first to ensure it belongs to the tenant
@@ -99,7 +111,8 @@ public class BillController {
 
 class BillResponseMapper {
     static String billNumber(Long id) {
-        if (id == null) return null;
+        if (id == null)
+            return null;
         return String.format("INV-%08d", id);
     }
 
@@ -110,6 +123,11 @@ class BillResponseMapper {
         r.setCustomerName(bill.getCustomerName());
         r.setContactInfo(bill.getContactInfo());
         r.setTotalAmount(bill.getTotalAmount());
+        r.setSubTotalAmount(bill.getSubTotalAmount());
+        r.setGstApplied(bill.getGstApplied());
+        r.setGstRate(bill.getGstRate());
+        r.setGstAmount(bill.getGstAmount());
+        r.setInstantDiscountAmount(bill.getInstantDiscountAmount());
         r.setCreatedAt(bill.getCreatedAt());
         r.setTenantId(bill.getTenantId());
         r.setPaidAmount(bill.getPaidAmount());
@@ -129,8 +147,7 @@ class BillResponseMapper {
                         it.setUnitSellingPrice(i.getUnitSellingPrice());
                         it.setDiscount(i.getDiscount());
                         return it;
-                    }).toList()
-            );
+                    }).toList());
         }
 
         if (bill.getPayments() != null) {
@@ -141,8 +158,7 @@ class BillResponseMapper {
                         pr.setAmount(p.getAmount());
                         pr.setReference(p.getReference());
                         return pr;
-                    }).toList()
-            );
+                    }).toList());
         }
 
         return r;

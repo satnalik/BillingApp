@@ -10,6 +10,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class UserService {
 
@@ -35,5 +37,22 @@ public class UserService {
         dto.setRole(savedUser.getRole());
 
         return dto;
+    }
+
+    public void changePassword(String newPassword,User user){
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.set_FirstTimeLogin(false);
+        userRepository.save(user);
+
+    }
+
+    public boolean changePasswordForUserId(String userId, String newPassword) {
+        Optional<User> userOpt = userRepository.findByUserId(userId);
+        if (userOpt.isEmpty()) {
+            return false;
+        }
+
+        changePassword(newPassword, userOpt.get());
+        return true;
     }
 }

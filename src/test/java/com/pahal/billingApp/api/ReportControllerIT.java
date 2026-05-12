@@ -70,7 +70,7 @@ class ReportControllerIT {
 
             BillItem item = new BillItem();
             item.setProductName("P");
-            item.setQuantity(1);
+            item.setQuantity(1.0);
             item.setDiscount(0.0);
             item.setUnitSellingPrice(1.0);
             b.setItems(List.of(item));

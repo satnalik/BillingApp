@@ -5,7 +5,7 @@ import lombok.Data;
 @Data
 public class CreateBillItemRequest {
     private String productName;
-    private Integer quantity;
+    private Double quantity;
     private Double discount;
 
     /**

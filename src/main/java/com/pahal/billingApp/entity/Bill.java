@@ -46,6 +46,32 @@ public class Bill {
     private Salesman salesMan;
 
     private Double totalAmount;
+
+    /**
+     * Amount before GST (after discounts).
+     */
+    private Double subTotalAmount;
+
+    /**
+     * Whether GST was applied while calculating this bill.
+     */
+    private Boolean gstApplied;
+
+    /**
+     * GST rate used for this bill as a fraction (example: 0.18).
+     */
+    private Double gstRate;
+
+    /**
+     * GST amount added to the subtotal.
+     */
+    private Double gstAmount;
+
+    /**
+     * Instant discount given by owner at payment time (absolute amount).
+     * This reduces {@link #totalAmount} and is not a due.
+     */
+    private Double instantDiscountAmount;
     private LocalDateTime createdAt;
 
     /**

@@ -1,19 +1,26 @@
 package com.pahal.billingApp.service;
 
+import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.Supplier;
 import com.pahal.billingApp.repository.ProductRepository;
+import com.pahal.billingApp.repository.SupplierRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Locale;
 
 @Service
 public class ProductService {
     @Autowired
     private ProductRepository productRepository;
 
+    @Autowired
+    private SupplierRepository supplierRepository;
+
     public Product addNewProduct(Product product){
+        resolveAndApplySupplier(product);
+        normalizeSellingPriceFields(product);
         return productRepository.save(product);
     }
     public List<Product> getAllProducts(){
@@ -39,13 +46,13 @@ public class ProductService {
 
         Product existing = productRepository.findByBarcode(normalizedBarcode);
         if (existing == null) {
+            resolveAndApplySupplier(request);
             normalizeSellingPriceFields(request);
             return productRepository.save(request);
         }
 
         existing.setName(request.getName());
         existing.setCategory(request.getCategory());
-        existing.setSupplierName(request.getSupplierName());
         existing.setCostPrice(request.getCostPrice());
         existing.setLandingPrice(request.getLandingPrice());
         existing.setMrp(request.getMrp());
@@ -53,8 +60,39 @@ public class ProductService {
         existing.setPrice(request.getPrice());
         existing.setStockQuantity(request.getStockQuantity());
 
+        Supplier supplier = resolveSupplier(request.getSupplier());
+        existing.setSupplier(supplier);
+        if (supplier != null) {
+            existing.setSupplierName(supplier.getName());
+        } else {
+            existing.setSupplierName(request.getSupplierName());
+        }
+
         normalizeSellingPriceFields(existing);
         return productRepository.save(existing);
+    }
+
+    private void resolveAndApplySupplier(Product product) {
+        Supplier supplier = resolveSupplier(product.getSupplier());
+        product.setSupplier(supplier);
+        if (supplier != null) {
+            product.setSupplierName(supplier.getName());
+        }
+    }
+
+    private Supplier resolveSupplier(Supplier supplier) {
+        if (supplier == null || supplier.getId() == null) {
+            return null;
+        }
+
+        String tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return supplierRepository.findById(supplier.getId())
+                    .orElseThrow(() -> new RuntimeException("Supplier not found"));
+        }
+
+        return supplierRepository.findByIdAndTenantId(supplier.getId(), tenantId)
+                .orElseThrow(() -> new RuntimeException("Supplier not found"));
     }
 
     private void normalizeSellingPriceFields(Product product) {

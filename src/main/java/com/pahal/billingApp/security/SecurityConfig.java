@@ -27,8 +27,14 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll() // ALLOW OPTIONS
                         .requestMatchers("/error").permitAll()
-                        .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html"
+                        ).permitAll()
+                        .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/adduser").permitAll()
+                        .requestMatchers("/api/auth/change-password").authenticated()
                         .requestMatchers("/api/bills/**").hasAnyRole("CASHIER", "ADMIN")
                         .requestMatchers("/api/products/**").hasAnyRole("CASHIER", "ADMIN")
                         .requestMatchers("/api/salesman/addsalesman").hasAnyRole("ADMIN")// Allow Login/Signup

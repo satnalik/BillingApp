@@ -24,6 +24,9 @@ public class User {
 
     private String userId;
 
+    @Column(nullable = false)
+    private boolean is_FirstTimeLogin = true;
+
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String password; // Encrypted
 

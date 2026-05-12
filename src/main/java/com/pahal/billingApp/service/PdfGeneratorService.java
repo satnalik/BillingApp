@@ -92,7 +92,7 @@ public class PdfGeneratorService {
             table.addCell(new Phrase("Amt", fontBodyBold));
             if (bill.getItems() != null) {
                 for (BillItem item : bill.getItems()) {
-                    int qty = item.getQuantity() != null ? item.getQuantity() : 0;
+                    double qty = item.getQuantity() != null ? item.getQuantity() : 0.0;
                     double unit = item.getPriceAtSale() != null ? item.getPriceAtSale() : 0.0;
                     double discountPct = item.getDiscount() != null ? item.getDiscount() : 0.0;
                     double discountedUnit = unit - (unit * discountPct / 100.0);
@@ -121,8 +121,37 @@ public class PdfGeneratorService {
             Paragraph line3 = new Paragraph("____________________________________", fontBody);
             line3.setAlignment(Element.ALIGN_CENTER);
             document.add(line3);
-//            document.add(new Paragraph("--------------------------------", fontBody));
-            Paragraph total = new Paragraph("TOTAL: \u20B9" + (bill.getTotalAmount() != null ? bill.getTotalAmount() : 0), fontHeader);
+
+            boolean gstApplied = bill.getGstApplied() != null && bill.getGstApplied();
+            Double subTotal = bill.getSubTotalAmount();
+            Double gstAmount = bill.getGstAmount();
+            Double gstRate = bill.getGstRate();
+
+            if (subTotal != null) {
+                Paragraph subTotalLine = new Paragraph("SUBTOTAL: \u20B9" + String.format("%.2f", subTotal), fontBodyBold);
+                subTotalLine.setAlignment(Element.ALIGN_RIGHT);
+                document.add(subTotalLine);
+            }
+
+            if (gstApplied) {
+                double pct = (gstRate != null ? gstRate : 0.0) * 100.0;
+                Paragraph gstLine = new Paragraph("GST (" + String.format("%.0f", pct) + "%): \u20B9" + String.format("%.2f", gstAmount != null ? gstAmount : 0.0), fontBodyBold);
+                gstLine.setAlignment(Element.ALIGN_RIGHT);
+                document.add(gstLine);
+            } else {
+                Paragraph gstLine = new Paragraph("GST: Not Applied", fontBody);
+                gstLine.setAlignment(Element.ALIGN_RIGHT);
+                document.add(gstLine);
+            }
+
+            Double instantDiscount = bill.getInstantDiscountAmount();
+            if (instantDiscount != null && instantDiscount > 0.0001) {
+                Paragraph discountLine = new Paragraph("DISCOUNT: -\u20B9" + String.format("%.2f", instantDiscount), fontBodyBold);
+                discountLine.setAlignment(Element.ALIGN_RIGHT);
+                document.add(discountLine);
+            }
+
+            Paragraph total = new Paragraph("TOTAL: \u20B9" + String.format("%.2f", bill.getTotalAmount() != null ? bill.getTotalAmount() : 0.0), fontHeader);
             total.setAlignment(Element.ALIGN_RIGHT);
             document.add(total);
 

@@ -42,6 +42,9 @@ public class BillingService {
     @Autowired
     private SalesManRepository salesManRepository;
 
+    @Autowired
+    private TenantSettingsService tenantSettingsService;
+
     @Transactional(readOnly = true)
     public List<Bill> getAllBillsWithDetails() {
         List<Bill> bills = billRepository.findAllByOrderByCreatedAtDesc();
@@ -122,11 +125,32 @@ public class BillingService {
             taxableTotal += (discountedPrice * item.getQuantity());
         }
 
-        // 4. Apply 18% GST (9% CGST + 9% SGST) to match the Frontend
-        double grandTotal = taxableTotal * 1.18;
+        var settings = tenantSettingsService.getOrCreateCurrentTenantSettings();
 
-        // Rounding to 2 decimal places before saving
-        billRequest.setTotalAmount(Math.round(grandTotal * 100.0) / 100.0);
+        boolean gstEnabled = settings.isGstEnabled();
+        double gstRate = settings.getGstRate();
+
+        double subTotal = round2(taxableTotal);
+        double gstAmount = gstEnabled ? round2(subTotal * gstRate) : 0.0;
+        double grandTotal = round2(subTotal + gstAmount);
+
+        double instantDiscount = request.getInstantDiscountAmount() != null ? request.getInstantDiscountAmount() : 0.0;
+        if (instantDiscount < 0.0) {
+            throw new RuntimeException("Instant discount must be >= 0");
+        }
+        if (instantDiscount - grandTotal > 0.0001) {
+            throw new RuntimeException("Instant discount cannot exceed bill total");
+        }
+        if (instantDiscount > 0.0001) {
+            grandTotal = round2(grandTotal - instantDiscount);
+        }
+
+        billRequest.setSubTotalAmount(subTotal);
+        billRequest.setGstApplied(gstEnabled);
+        billRequest.setGstRate(gstEnabled ? gstRate : 0.0);
+        billRequest.setGstAmount(gstAmount);
+        billRequest.setInstantDiscountAmount(instantDiscount > 0.0001 ? round2(instantDiscount) : 0.0);
+        billRequest.setTotalAmount(grandTotal);
 
         applyPayments(billRequest);
 
@@ -280,5 +304,9 @@ public class BillingService {
         }
         bill.setPaidAmount(Math.round(paid * 100.0) / 100.0);
         bill.setDueAmount(Math.round(due * 100.0) / 100.0);
+    }
+
+    private static double round2(double amount) {
+        return Math.round(amount * 100.0) / 100.0;
     }
 }
