@@ -1,9 +1,11 @@
 package com.pahal.billingApp.service;
 
 import com.pahal.billingApp.context.TenantContext;
+import com.pahal.billingApp.dto.AddPurchasePaymentRequest;
 import com.pahal.billingApp.dto.CancelPurchaseBillRequest;
 import com.pahal.billingApp.dto.CreatePurchaseBillItemRequest;
 import com.pahal.billingApp.dto.CreatePurchaseBillRequest;
+import com.pahal.billingApp.dto.PurchaseBarcodeLabelResponse;
 import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.PurchaseBill;
 import com.pahal.billingApp.entity.PurchaseBillItem;
@@ -34,6 +36,9 @@ public class PurchaseService {
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private BarcodeService barcodeService;
 
     @Transactional
     public PurchaseBill createPurchaseBill(CreatePurchaseBillRequest request) {
@@ -113,6 +118,9 @@ public class PurchaseService {
         if (getEffectiveStatus(bill) == PurchaseStatus.CANCELLED) {
             throw new RuntimeException("Purchase bill is already cancelled");
         }
+        if (nonNull(bill.getPaidAmount()) > 0.0001) {
+            throw new RuntimeException("Cannot cancel purchase after supplier payment is recorded");
+        }
 
         if (bill.getItems() != null) {
             for (PurchaseBillItem item : bill.getItems()) {
@@ -133,6 +141,101 @@ public class PurchaseService {
         bill.setCancelReason(request != null ? request.getReason() : null);
         bill.setCancelledAt(LocalDateTime.now());
         return purchaseBillRepository.save(bill);
+    }
+
+    @Transactional
+    public PurchaseBill addDuePayment(Long purchaseBillId, AddPurchasePaymentRequest request) {
+        if (purchaseBillId == null) throw new RuntimeException("Purchase bill id is required");
+        if (request == null) throw new RuntimeException("Request is required");
+        if (request.getMethod() == null) throw new RuntimeException("Payment method is required");
+        if (request.getMethod() == PaymentMethod.CREDIT) {
+            throw new RuntimeException("CREDIT cannot be used to pay supplier due");
+        }
+        if (request.getAmount() == null || request.getAmount() <= 0.0) {
+            throw new RuntimeException("Payment amount must be > 0");
+        }
+
+        PurchaseBill bill = purchaseBillRepository.findWithDetailsByIdForUpdate(purchaseBillId)
+                .orElseThrow(() -> new RuntimeException("Purchase bill not found"));
+
+        if (getEffectiveStatus(bill) == PurchaseStatus.CANCELLED) {
+            throw new RuntimeException("Cannot add payment to a cancelled purchase bill");
+        }
+
+        double currentDue = nonNull(bill.getDueAmount());
+        double amount = request.getAmount();
+        if (amount - currentDue > 0.0001) {
+            throw new RuntimeException("Payment amount exceeds current supplier due");
+        }
+
+        PurchasePayment payment = new PurchasePayment();
+        payment.setPurchaseBill(bill);
+        payment.setMethod(request.getMethod());
+        payment.setAmount(round2(amount));
+        payment.setReference(request.getReference());
+        bill.getPayments().add(payment);
+
+        bill.setPaidAmount(round2(nonNull(bill.getPaidAmount()) + amount));
+        bill.setDueAmount(round2(currentDue - amount));
+
+        return purchaseBillRepository.save(bill);
+    }
+
+    @Transactional
+    public PurchaseBarcodeLabelResponse generateBarcodeLabels(Long purchaseBillId) {
+        PurchaseBill bill = purchaseBillRepository.findWithDetailsById(purchaseBillId)
+                .orElseThrow(() -> new RuntimeException("Purchase bill not found"));
+
+        if (getEffectiveStatus(bill) == PurchaseStatus.CANCELLED) {
+            throw new RuntimeException("Cannot generate barcodes for a cancelled purchase bill");
+        }
+
+        Supplier supplier = bill.getSupplier();
+        PurchaseBarcodeLabelResponse response = new PurchaseBarcodeLabelResponse();
+        response.setPurchaseBillId(bill.getId());
+        response.setBillNumber(bill.getBillNumber());
+        if (supplier != null) {
+            response.setSupplierId(supplier.getId());
+            response.setSupplierName(supplier.getName());
+            response.setSupplierCode(supplier.getSupplierCode());
+        }
+
+        response.setItems(bill.getItems().stream()
+                .map(item -> toBarcodeLabelItem(item, supplier))
+                .toList());
+        return response;
+    }
+
+    private PurchaseBarcodeLabelResponse.Item toBarcodeLabelItem(PurchaseBillItem item, Supplier supplier) {
+        Product product = item.getProduct();
+        if (product == null) {
+            throw new RuntimeException("Purchase item product is required for barcode generation");
+        }
+
+        if (product.getBarcode() == null || product.getBarcode().isBlank()) {
+            product.setBarcode(barcodeService.generateProductBarcode(product, supplier));
+        }
+        if (product.getSupplier() == null && supplier != null) {
+            product.setSupplier(supplier);
+            product.setSupplierName(supplier.getName());
+        }
+
+        PurchaseBarcodeLabelResponse.Item response = new PurchaseBarcodeLabelResponse.Item();
+        response.setProductId(product.getId());
+        response.setProductName(item.getProductName() != null ? item.getProductName() : product.getName());
+        response.setBarcode(product.getBarcode());
+        response.setQuantityReceived(item.getQuantity());
+        response.setLabelsToPrint(toLabelCount(item.getQuantity()));
+        response.setSellingPrice(item.getSellingPrice() != null ? item.getSellingPrice() : product.getSellingPrice());
+        response.setMrp(product.getMrp());
+        response.setCategory(product.getCategory());
+        response.setSupplierName(supplier != null ? supplier.getName() : product.getSupplierName());
+        return response;
+    }
+
+    private int toLabelCount(Double quantity) {
+        if (quantity == null || quantity <= 0.0) return 0;
+        return (int) Math.ceil(quantity);
     }
 
     private PurchaseBillItem buildItem(CreatePurchaseBillItemRequest itemRequest, String tenantId) {

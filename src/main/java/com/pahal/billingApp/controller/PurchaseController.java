@@ -1,16 +1,23 @@
 package com.pahal.billingApp.controller;
 
 import com.pahal.billingApp.dto.CancelPurchaseBillRequest;
+import com.pahal.billingApp.dto.BarcodeLabelPdfRequest;
+import com.pahal.billingApp.dto.AddPurchasePaymentRequest;
 import com.pahal.billingApp.dto.CreatePurchaseBillRequest;
+import com.pahal.billingApp.dto.PurchaseBarcodeLabelResponse;
 import com.pahal.billingApp.dto.PurchaseBillResponse;
 import com.pahal.billingApp.entity.PurchaseBill;
 import com.pahal.billingApp.entity.PurchaseBillItem;
 import com.pahal.billingApp.entity.PurchasePayment;
 import com.pahal.billingApp.enums.PurchaseStatus;
+import com.pahal.billingApp.service.BarcodeLabelPdfService;
 import com.pahal.billingApp.service.PurchaseService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -29,6 +36,9 @@ public class PurchaseController {
 
     @Autowired
     private PurchaseService purchaseService;
+
+    @Autowired
+    private BarcodeLabelPdfService barcodeLabelPdfService;
 
     @Operation(summary = "Create Purchase Bill", description = "Creates a supplier purchase bill and increases product stock.")
     @PostMapping
@@ -58,6 +68,37 @@ public class PurchaseController {
             @PathVariable Long id,
             @RequestBody(required = false) CancelPurchaseBillRequest request) {
         return ResponseEntity.ok(PurchaseBillResponseMapper.toResponse(purchaseService.cancelPurchaseBill(id, request)));
+    }
+
+    @Operation(summary = "Add Supplier Due Payment", description = "Records a payment against a purchase bill and reduces supplier due.")
+    @PostMapping("/{id}/payments")
+    public ResponseEntity<PurchaseBillResponse> addDuePayment(
+            @PathVariable Long id,
+            @RequestBody AddPurchasePaymentRequest request) {
+        return ResponseEntity.ok(PurchaseBillResponseMapper.toResponse(purchaseService.addDuePayment(id, request)));
+    }
+
+    @Operation(summary = "Generate Purchase Barcode Labels", description = "Generates missing product barcodes and returns label rows for a purchase bill.")
+    @PostMapping("/{id}/barcode-labels/generate")
+    public ResponseEntity<PurchaseBarcodeLabelResponse> generateBarcodeLabels(@PathVariable Long id) {
+        return ResponseEntity.ok(purchaseService.generateBarcodeLabels(id));
+    }
+
+    @Operation(summary = "Download Purchase Barcode Label PDF", description = "Generates a printable A4 PDF with Code 128 barcode labels for a purchase bill.")
+    @PostMapping(value = "/{id}/barcode-labels/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<InputStreamResource> downloadBarcodeLabelsPdf(
+            @PathVariable Long id,
+            @RequestBody(required = false) BarcodeLabelPdfRequest request) {
+        PurchaseBarcodeLabelResponse labels = purchaseService.generateBarcodeLabels(id);
+        String fileName = "barcode-labels-purchase-" + id + ".pdf";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("Content-Disposition", "inline; filename=" + fileName);
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(new InputStreamResource(barcodeLabelPdfService.generatePurchaseLabelsPdf(labels, request)));
     }
 }
 

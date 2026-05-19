@@ -127,4 +127,106 @@ class ProductControllerIT {
             TenantContext.clear();
         }
     }
+
+    @Test
+    void createProduct_withoutBarcodeAndFilterProductsBySupplier() throws Exception {
+        TenantContext.setCurrentTenant(TENANT);
+        try {
+            Supplier supplier = new Supplier();
+            supplier.setName("No Barcode Supplier");
+            supplier.setSupplierCode("NBS");
+            supplier = supplierRepository.save(supplier);
+
+            Supplier otherSupplier = new Supplier();
+            otherSupplier.setName("Other Supplier");
+            otherSupplier.setSupplierCode("OTH");
+            otherSupplier = supplierRepository.save(otherSupplier);
+
+            Product product = new Product();
+            product.setName("Barcode Later Product");
+            product.setSellingPrice(199.0);
+            product.setPrice(199.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(0.0);
+
+            Supplier supplierRef = new Supplier();
+            supplierRef.setId(supplier.getId());
+            product.setSupplier(supplierRef);
+
+            mockMvc.perform(
+                            post("/api/products")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(product))
+                    )
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").isNumber())
+                    .andExpect(jsonPath("$.supplier.id").value(supplier.getId()))
+                    .andExpect(jsonPath("$.supplierName").value("No Barcode Supplier"));
+
+            Product otherProduct = new Product();
+            otherProduct.setName("Other Product");
+            otherProduct.setSellingPrice(299.0);
+            otherProduct.setPrice(299.0);
+            otherProduct.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            otherProduct.setStockQuantity(0.0);
+            otherProduct.setSupplier(otherSupplier);
+            TenantContext.setCurrentTenant(TENANT);
+            productRepository.save(otherProduct);
+
+            TenantContext.setCurrentTenant(TENANT);
+            mockMvc.perform(get("/api/products").param("supplierId", supplier.getId().toString()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[?(@.name=='Barcode Later Product')]").exists())
+                    .andExpect(jsonPath("$[?(@.name=='Other Product')]").doesNotExist());
+
+            TenantContext.setCurrentTenant(TENANT);
+            mockMvc.perform(get("/api/products/search")
+                            .param("supplierId", supplier.getId().toString())
+                            .param("name", "Barcode Later"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[?(@.name=='Barcode Later Product')]").exists())
+                    .andExpect(jsonPath("$[?(@.name=='Other Product')]").doesNotExist());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void getByBarcode_withSupplierIdReturnsOnlyMatchingSupplierProduct() throws Exception {
+        TenantContext.setCurrentTenant(TENANT);
+        try {
+            Supplier supplier = new Supplier();
+            supplier.setName("Barcode Supplier");
+            supplier.setSupplierCode("BCS");
+            supplier = supplierRepository.save(supplier);
+
+            Supplier otherSupplier = new Supplier();
+            otherSupplier.setName("Wrong Supplier");
+            otherSupplier.setSupplierCode("WRG");
+            otherSupplier = supplierRepository.save(otherSupplier);
+
+            Product product = new Product();
+            product.setBarcode("8901234567890");
+            product.setName("Packed Grocery Item");
+            product.setSellingPrice(49.0);
+            product.setPrice(49.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(5.0);
+            product.setSupplier(supplier);
+            product.setSupplierName(supplier.getName());
+            productRepository.save(product);
+
+            mockMvc.perform(get("/api/products/barcode/{barcode}", "8901234567890")
+                            .param("supplierId", supplier.getId().toString()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(product.getId()))
+                    .andExpect(jsonPath("$.supplier.id").value(supplier.getId()));
+
+            mockMvc.perform(get("/api/products/barcode/{barcode}", "8901234567890")
+                            .param("supplierId", otherSupplier.getId().toString()))
+                    .andExpect(status().isNotFound());
+        } finally {
+            TenantContext.clear();
+        }
+    }
 }

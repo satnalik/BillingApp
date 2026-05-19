@@ -26,8 +26,26 @@ public class ProductService {
     public List<Product> getAllProducts(){
         return productRepository.findAll();
     }
+
+    public List<Product> getProductsBySupplier(Long supplierId) {
+        if (supplierId == null) {
+            return getAllProducts();
+        }
+        return productRepository.findBySupplierId(supplierId);
+    }
+
     public List<Product> searchProducts(String name, String tenantId) {
         return productRepository.findByNameContainingIgnoreCaseAndTenantId(name, tenantId);
+    }
+
+    public List<Product> searchProductsBySupplier(Long supplierId, String name) {
+        if (supplierId == null) {
+            String tenantId = TenantContext.getCurrentTenant();
+            return tenantId != null
+                    ? searchProducts(name, tenantId)
+                    : productRepository.findByNameContainingIgnoreCaseAndTenantId(name, null);
+        }
+        return productRepository.findBySupplierIdAndNameContainingIgnoreCase(supplierId, name);
     }
 
     public Product getByBarcode(String barcode) {
@@ -35,6 +53,17 @@ public class ProductService {
             throw new RuntimeException("Barcode is required");
         }
         return productRepository.findByBarcode(barcode.trim());
+    }
+
+    public Product getByBarcode(String barcode, Long supplierId) {
+        Product product = getByBarcode(barcode);
+        if (product == null || supplierId == null) {
+            return product;
+        }
+        if (product.getSupplier() == null || product.getSupplier().getId() == null) {
+            return null;
+        }
+        return product.getSupplier().getId().equals(supplierId) ? product : null;
     }
 
     public Product upsertByBarcode(Product request) {

@@ -25,10 +25,10 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
-    @Operation(summary = "Get All Products", description = "Retrieves all products for the current tenant. Tenant scoping is enforced by Hibernate filter.")
+    @Operation(summary = "Get Products", description = "Retrieves products for the current tenant, optionally filtered by supplier.")
     @GetMapping
-    public List<Product> getAllProducts() {
-        return productService.getAllProducts();
+    public List<Product> getProducts(@RequestParam(required = false) Long supplierId) {
+        return productService.getProductsBySupplier(supplierId);
     }
 
     @Operation(summary = "Create a New Product", description = "Creates a new product with the provided details. The product will be associated with the tenant from the JWT token.")
@@ -43,8 +43,10 @@ public class ProductController {
      */
     @Operation(summary = "Get Product by Barcode", description = "Retrieves a product by its barcode. Tenant scoping is enforced by Hibernate filter.")
     @GetMapping("/barcode/{barcode}")
-    public ResponseEntity<Product> getByBarcode(@PathVariable String barcode) {
-        Product p = productService.getByBarcode(barcode);
+    public ResponseEntity<Product> getByBarcode(
+            @PathVariable String barcode,
+            @RequestParam(required = false) Long supplierId) {
+        Product p = productService.getByBarcode(barcode, supplierId);
         if (p == null)
             return ResponseEntity.notFound().build();
         return ResponseEntity.ok(p);
@@ -64,7 +66,12 @@ public class ProductController {
     @GetMapping("/search")
     public ResponseEntity<List<Product>> searchProducts(
             @RequestParam String name,
+            @RequestParam(required = false) Long supplierId,
             Authentication authentication) {
+
+        if (supplierId != null) {
+            return ResponseEntity.ok(productService.searchProductsBySupplier(supplierId, name));
+        }
 
         // Extract tenantId from the JWT claims
         // (Assuming your CustomUserDetails stores tenantId)

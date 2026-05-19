@@ -24,6 +24,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     Optional<Product> findByIdAndTenantId(Long id, String tenantId);
 
+    List<Product> findBySupplierId(Long supplierId);
+
+    List<Product> findBySupplierIdAndNameContainingIgnoreCase(Long supplierId, String name);
+
     long countByStockQuantityLessThanEqual(Double threshold);
 
     List<Product> findTop10ByStockQuantityLessThanEqualOrderByStockQuantityAsc(Double threshold);
