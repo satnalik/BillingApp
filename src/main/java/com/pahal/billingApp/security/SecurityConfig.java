@@ -33,13 +33,14 @@ public class SecurityConfig {
                                 "/swagger-ui.html"
                         ).permitAll()
                         .requestMatchers("/api/auth/login").permitAll()
-                        .requestMatchers("/api/adduser").permitAll()
+                        .requestMatchers("/api/users/adduser").permitAll()
                         .requestMatchers("/api/auth/change-password").authenticated()
                         .requestMatchers("/api/bills/**").hasAnyRole("CASHIER", "ADMIN")
                         .requestMatchers("/api/products/**").hasAnyRole("CASHIER", "ADMIN")
                         .requestMatchers("/api/salesman/addsalesman").hasAnyRole("ADMIN")// Allow Login/Signup
                         .requestMatchers("/api/salesman").hasAnyRole("CASHIER", "ADMIN")// Allow Login/Signup
-                        .requestMatchers("/api/reports/**").hasAnyRole("CASHIER", "ADMIN")
+                        .requestMatchers("/api/reports/**").hasAnyRole("ADMIN")
+                        .requestMatchers("/api/dashboard/**").hasAnyRole("CASHIER", "ADMIN")
                         .anyRequest().authenticated()
 
                 );

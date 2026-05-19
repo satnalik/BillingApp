@@ -6,6 +6,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.security.Key;
@@ -18,8 +19,8 @@ import java.util.function.Function;
 public class JwtService {
 
     // In production, move this to Azure Key Vault or environment variables
-    private static final String SECRET_KEY = "your_very_secure_and_very_long_secret_key_here";
-
+    @Value("${app.jwt.secret}")
+    private String secretKey;
     public String extractTenantId(String token) {
         return (String) extractClaim(token, (Function<Claims, Object>) claims -> claims.get("tenantId", String.class));
     }
@@ -52,6 +53,6 @@ public class JwtService {
     }
 
     private Key getSigningKey() {
-        return Keys.hmacShaKeyFor(SECRET_KEY.getBytes());
+        return Keys.hmacShaKeyFor(secretKey.getBytes());
     }
 }

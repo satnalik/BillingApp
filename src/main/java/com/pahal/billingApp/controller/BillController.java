@@ -1,9 +1,12 @@
 package com.pahal.billingApp.controller;
 
 import com.pahal.billingApp.dto.AddBillPaymentRequest;
+import com.pahal.billingApp.dto.BillRegisterResponse;
+import com.pahal.billingApp.dto.BillRegisterSummaryResponse;
 import com.pahal.billingApp.dto.BillResponse;
 import com.pahal.billingApp.dto.CreateBillRequest;
 import com.pahal.billingApp.entity.Bill;
+import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.service.BillingService;
 import com.pahal.billingApp.service.PdfGeneratorService;
 
@@ -12,12 +15,14 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -58,6 +63,38 @@ public class BillController {
                 .stream()
                 .map(BillResponseMapper::toResponse)
                 .toList();
+    }
+
+    @Operation(summary = "Bill Register", description = "Returns a paged, filterable sales bill register.")
+    @GetMapping("/register")
+    public ResponseEntity<BillRegisterResponse> getBillRegister(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String billNo,
+            @RequestParam(required = false) String customer,
+            @RequestParam(required = false) String phone,
+            @RequestParam(required = false) String salesmanId,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(defaultValue = "false") boolean dueOnly,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "25") int size) {
+        return ResponseEntity.ok(billingService.getBillRegister(
+                from, to, billNo, customer, phone, salesmanId, paymentMethod, dueOnly, page, size));
+    }
+
+    @Operation(summary = "Bill Register Summary", description = "Returns totals for the same filters used by the bill register.")
+    @GetMapping("/register/summary")
+    public ResponseEntity<BillRegisterSummaryResponse> getBillRegisterSummary(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String billNo,
+            @RequestParam(required = false) String customer,
+            @RequestParam(required = false) String phone,
+            @RequestParam(required = false) String salesmanId,
+            @RequestParam(required = false) PaymentMethod paymentMethod,
+            @RequestParam(defaultValue = "false") boolean dueOnly) {
+        return ResponseEntity.ok(billingService.getBillRegisterSummary(
+                from, to, billNo, customer, phone, salesmanId, paymentMethod, dueOnly));
     }
 
     /**

@@ -7,6 +7,9 @@ import com.pahal.billingApp.dto.CreateBillItemRequest;
 import com.pahal.billingApp.dto.CreateBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.Bill;
+import com.pahal.billingApp.entity.BillItem;
+import com.pahal.billingApp.entity.BillPayment;
 import com.pahal.billingApp.entity.Salesman;
 import com.pahal.billingApp.entity.TenantSettings;
 import com.pahal.billingApp.repository.BillRepository;
@@ -23,6 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.LinkedHashSet;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,6 +46,74 @@ class BillControllerIT {
     @Autowired SalesManRepository salesManRepository;
     @Autowired BillRepository billRepository;
     @Autowired TenantSettingsRepository tenantSettingsRepository;
+
+    @Test
+    void billRegister_filtersAndReturnsSummary() throws Exception {
+        final String registerTenant = "Tenant-Register";
+
+        TenantContext.setCurrentTenant(registerTenant);
+        long billId;
+        try {
+            Bill bill = new Bill();
+            bill.setCustomerName("Register Customer");
+            bill.setContactInfo("9990001111");
+            bill.setTotalAmount(500.0);
+            bill.setPaidAmount(300.0);
+            bill.setDueAmount(200.0);
+
+            BillItem item = new BillItem();
+            item.setProductName("Register Product");
+            item.setQuantity(1.0);
+            item.setUnitSellingPrice(500.0);
+            item.setPriceAtSale(500.0);
+            bill.setItems(List.of(item));
+
+            BillPayment cash = new BillPayment();
+            cash.setBill(bill);
+            cash.setMethod(com.pahal.billingApp.enums.PaymentMethod.CASH);
+            cash.setAmount(300.0);
+
+            BillPayment credit = new BillPayment();
+            credit.setBill(bill);
+            credit.setMethod(com.pahal.billingApp.enums.PaymentMethod.CREDIT);
+            credit.setAmount(200.0);
+            bill.setPayments(new LinkedHashSet<>(List.of(cash, credit)));
+
+            billId = billRepository.save(bill).getId();
+        } finally {
+            TenantContext.clear();
+        }
+
+        TenantContext.setCurrentTenant(registerTenant);
+        try {
+            mockMvc.perform(get("/api/bills/register")
+                            .param("billNo", String.format("INV-%08d", billId))
+                            .param("dueOnly", "true")
+                            .param("page", "0")
+                            .param("size", "10"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(1))
+                    .andExpect(jsonPath("$.items[0].id").value(billId))
+                    .andExpect(jsonPath("$.items[0].billNumber").value(String.format("INV-%08d", billId)))
+                    .andExpect(jsonPath("$.items[0].customerName").value("Register Customer"))
+                    .andExpect(jsonPath("$.items[0].itemsCount").value(1))
+                    .andExpect(jsonPath("$.items[0].paymentMethods[?(@=='CASH')]").exists())
+                    .andExpect(jsonPath("$.items[0].paymentMethods[?(@=='CREDIT')]").exists());
+
+            mockMvc.perform(get("/api/bills/register/summary")
+                            .param("billNo", String.format("INV-%08d", billId))
+                            .param("dueOnly", "true"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalBills").value(1))
+                    .andExpect(jsonPath("$.totalSales").value(500.0))
+                    .andExpect(jsonPath("$.totalPaid").value(300.0))
+                    .andExpect(jsonPath("$.totalDue").value(200.0))
+                    .andExpect(jsonPath("$.paymentSplit.CASH").value(300.0))
+                    .andExpect(jsonPath("$.paymentSplit.CREDIT").value(200.0));
+        } finally {
+            TenantContext.clear();
+        }
+    }
 
     @Test
     void createBill_thenFetchById_includesPaymentsAndBillNumber() throws Exception {

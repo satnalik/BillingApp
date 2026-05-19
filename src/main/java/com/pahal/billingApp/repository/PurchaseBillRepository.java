@@ -1,6 +1,7 @@
 package com.pahal.billingApp.repository;
 
 import com.pahal.billingApp.entity.PurchaseBill;
+import com.pahal.billingApp.enums.PurchaseStatus;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -25,4 +26,12 @@ public interface PurchaseBillRepository extends JpaRepository<PurchaseBill, Long
     @EntityGraph(attributePaths = { "supplier", "items", "items.product", "payments" })
     @Query("select p from PurchaseBill p where p.id = :id")
     Optional<PurchaseBill> findWithDetailsByIdForUpdate(@Param("id") Long id);
+
+    @Query("""
+            select coalesce(sum(p.dueAmount), 0)
+            from PurchaseBill p
+            where (p.status is null or p.status <> :cancelled)
+              and coalesce(p.dueAmount, 0) > 0
+            """)
+    Double sumActiveSupplierDueAmount(@Param("cancelled") PurchaseStatus cancelled);
 }

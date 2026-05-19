@@ -16,6 +16,7 @@ import org.hibernate.annotations.ParamDef;
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Long id;
 
     @Enumerated(EnumType.STRING)

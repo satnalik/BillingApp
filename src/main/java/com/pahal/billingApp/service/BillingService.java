@@ -2,9 +2,12 @@ package com.pahal.billingApp.service;
 
 
 import com.pahal.billingApp.dto.AddBillPaymentRequest;
+import com.pahal.billingApp.dto.BillRegisterResponse;
+import com.pahal.billingApp.dto.BillRegisterSummaryResponse;
 import com.pahal.billingApp.dto.CreateBillItemRequest;
 import com.pahal.billingApp.dto.CreateBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
+import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.entity.BillItem;
 import com.pahal.billingApp.entity.BillPayment;
@@ -17,14 +20,32 @@ import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SalesManRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.TypedQuery;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -45,6 +66,9 @@ public class BillingService {
     @Autowired
     private TenantSettingsService tenantSettingsService;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @Transactional(readOnly = true)
     public List<Bill> getAllBillsWithDetails() {
         List<Bill> bills = billRepository.findAllByOrderByCreatedAtDesc();
@@ -58,6 +82,197 @@ public class BillingService {
                 .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
         hydratePayments(List.of(bill));
         return bill;
+    }
+
+    @Transactional(readOnly = true)
+    public BillRegisterResponse getBillRegister(
+            LocalDate from,
+            LocalDate to,
+            String billNo,
+            String customer,
+            String phone,
+            String salesmanId,
+            PaymentMethod paymentMethod,
+            boolean dueOnly,
+            int page,
+            int size) {
+        LocalDateTime start = normalizeFrom(from);
+        LocalDateTime end = normalizeTo(to);
+        Long billId = parseBillId(billNo);
+
+        PageRequest pageRequest = PageRequest.of(
+                Math.max(page, 0),
+                Math.min(Math.max(size, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt")
+        );
+
+        Page<Bill> billPage = findBillRegisterPage(
+                start,
+                end,
+                billId,
+                blankToNull(customer),
+                blankToNull(phone),
+                blankToNull(salesmanId),
+                paymentMethod,
+                dueOnly,
+                pageRequest
+        );
+        hydratePayments(billPage.getContent());
+
+        BillRegisterResponse response = new BillRegisterResponse();
+        response.setItems(billPage.getContent().stream().map(this::toBillRegisterItem).toList());
+        response.setPage(billPage.getNumber());
+        response.setSize(billPage.getSize());
+        response.setTotalElements(billPage.getTotalElements());
+        response.setTotalPages(billPage.getTotalPages());
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public BillRegisterSummaryResponse getBillRegisterSummary(
+            LocalDate from,
+            LocalDate to,
+            String billNo,
+            String customer,
+            String phone,
+            String salesmanId,
+            PaymentMethod paymentMethod,
+            boolean dueOnly) {
+        List<Bill> bills = findBillRegisterForSummary(
+                normalizeFrom(from),
+                normalizeTo(to),
+                parseBillId(billNo),
+                blankToNull(customer),
+                blankToNull(phone),
+                blankToNull(salesmanId),
+                paymentMethod,
+                dueOnly
+        );
+        hydratePayments(bills);
+
+        BillRegisterSummaryResponse response = new BillRegisterSummaryResponse();
+        response.setTotalBills(bills.size());
+        response.setTotalSales(round2(bills.stream().mapToDouble(b -> nonNull(b.getTotalAmount())).sum()));
+        response.setTotalPaid(round2(bills.stream().mapToDouble(b -> nonNull(b.getPaidAmount())).sum()));
+        response.setTotalDue(round2(bills.stream().mapToDouble(b -> nonNull(b.getDueAmount())).sum()));
+
+        Map<PaymentMethod, Double> split = new LinkedHashMap<>();
+        for (PaymentMethod method : PaymentMethod.values()) {
+            split.put(method, 0.0);
+        }
+        for (Bill bill : bills) {
+            if (bill.getPayments() == null) continue;
+            for (BillPayment payment : bill.getPayments()) {
+                if (payment == null || payment.getMethod() == null) continue;
+                split.merge(payment.getMethod(), nonNull(payment.getAmount()), Double::sum);
+            }
+        }
+        split.replaceAll((method, amount) -> round2(amount));
+        response.setPaymentSplit(split);
+        return response;
+    }
+
+    private Page<Bill> findBillRegisterPage(
+            LocalDateTime start,
+            LocalDateTime end,
+            Long billId,
+            String customer,
+            String phone,
+            String salesmanId,
+            PaymentMethod paymentMethod,
+            boolean dueOnly,
+            PageRequest pageRequest) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+
+        CriteriaQuery<Bill> query = cb.createQuery(Bill.class);
+        Root<Bill> root = query.from(Bill.class);
+        root.fetch("salesMan", JoinType.LEFT);
+        query.select(root).distinct(true);
+        query.where(buildBillRegisterPredicates(cb, query, root, start, end, billId, customer, phone, salesmanId, paymentMethod, dueOnly));
+        query.orderBy(cb.desc(root.get("createdAt")));
+
+        TypedQuery<Bill> typedQuery = entityManager.createQuery(query);
+        typedQuery.setFirstResult((int) pageRequest.getOffset());
+        typedQuery.setMaxResults(pageRequest.getPageSize());
+
+        CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+        Root<Bill> countRoot = countQuery.from(Bill.class);
+        countQuery.select(cb.countDistinct(countRoot));
+        countQuery.where(buildBillRegisterPredicates(cb, countQuery, countRoot, start, end, billId, customer, phone, salesmanId, paymentMethod, dueOnly));
+        long total = entityManager.createQuery(countQuery).getSingleResult();
+
+        return new PageImpl<>(typedQuery.getResultList(), pageRequest, total);
+    }
+
+    private List<Bill> findBillRegisterForSummary(
+            LocalDateTime start,
+            LocalDateTime end,
+            Long billId,
+            String customer,
+            String phone,
+            String salesmanId,
+            PaymentMethod paymentMethod,
+            boolean dueOnly) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Bill> query = cb.createQuery(Bill.class);
+        Root<Bill> root = query.from(Bill.class);
+        root.fetch("salesMan", JoinType.LEFT);
+        query.select(root).distinct(true);
+        query.where(buildBillRegisterPredicates(cb, query, root, start, end, billId, customer, phone, salesmanId, paymentMethod, dueOnly));
+        query.orderBy(cb.desc(root.get("createdAt")));
+        return entityManager.createQuery(query).getResultList();
+    }
+
+    private Predicate[] buildBillRegisterPredicates(
+            CriteriaBuilder cb,
+            CriteriaQuery<?> query,
+            Root<Bill> root,
+            LocalDateTime start,
+            LocalDateTime end,
+            Long billId,
+            String customer,
+            String phone,
+            String salesmanId,
+            PaymentMethod paymentMethod,
+            boolean dueOnly) {
+        List<Predicate> predicates = new ArrayList<>();
+
+        String tenantId = TenantContext.getCurrentTenant();
+        if (tenantId != null) {
+            predicates.add(cb.equal(root.get("tenantId"), tenantId));
+        }
+
+        predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), start));
+        predicates.add(cb.lessThan(root.get("createdAt"), end));
+
+        if (billId != null) {
+            predicates.add(cb.equal(root.get("id"), billId));
+        }
+        if (customer != null) {
+            predicates.add(cb.like(cb.lower(root.get("customerName")), "%" + customer.toLowerCase() + "%"));
+        }
+        if (phone != null) {
+            predicates.add(cb.like(cb.lower(root.get("contactInfo")), "%" + phone.toLowerCase() + "%"));
+        }
+        if (salesmanId != null) {
+            Join<Object, Object> salesMan = root.join("salesMan", JoinType.LEFT);
+            predicates.add(cb.equal(salesMan.get("employeeId"), salesmanId));
+        }
+        if (dueOnly) {
+            predicates.add(cb.greaterThan(cb.coalesce(root.get("dueAmount"), 0.0), 0.0));
+        }
+        if (paymentMethod != null) {
+            Subquery<Long> subquery = query.subquery(Long.class);
+            Root<BillPayment> payment = subquery.from(BillPayment.class);
+            subquery.select(payment.get("id"));
+            subquery.where(
+                    cb.equal(payment.get("bill"), root),
+                    cb.equal(payment.get("method"), paymentMethod)
+            );
+            predicates.add(cb.exists(subquery));
+        }
+
+        return predicates.toArray(new Predicate[0]);
     }
 
     @Transactional
@@ -223,6 +438,69 @@ public class BillingService {
             LinkedHashSet<BillPayment> payments = paymentsByBillId.getOrDefault(bill.getId(), new LinkedHashSet<>());
             bill.setPayments(payments);
         }
+    }
+
+    private BillRegisterResponse.Item toBillRegisterItem(Bill bill) {
+        BillRegisterResponse.Item item = new BillRegisterResponse.Item();
+        item.setId(bill.getId());
+        item.setBillNumber(billNumber(bill.getId()));
+        item.setCreatedAt(bill.getCreatedAt());
+        item.setCustomerName(bill.getCustomerName());
+        item.setContactInfo(bill.getContactInfo());
+        item.setItemsCount(bill.getItems() != null ? bill.getItems().size() : 0);
+        item.setTotalAmount(bill.getTotalAmount());
+        item.setPaidAmount(bill.getPaidAmount());
+        item.setDueAmount(bill.getDueAmount());
+
+        if (bill.getSalesMan() != null) {
+            item.setSalesmanEmployeeId(bill.getSalesMan().getEmployeeId());
+            item.setSalesmanName(bill.getSalesMan().getName());
+        }
+
+        if (bill.getPayments() != null) {
+            item.setPaymentMethods(bill.getPayments().stream()
+                    .map(BillPayment::getMethod)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList());
+        }
+        return item;
+    }
+
+    private static String billNumber(Long id) {
+        if (id == null) return null;
+        return String.format("INV-%08d", id);
+    }
+
+    private static Long parseBillId(String billNo) {
+        String value = blankToNull(billNo);
+        if (value == null) return null;
+        String normalized = value.toUpperCase();
+        if (normalized.startsWith("INV-")) {
+            normalized = normalized.substring(4);
+        }
+        try {
+            return Long.parseLong(normalized);
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
+    private static LocalDateTime normalizeFrom(LocalDate from) {
+        return (from != null ? from : LocalDate.now()).atStartOfDay();
+    }
+
+    private static LocalDateTime normalizeTo(LocalDate to) {
+        return (to != null ? to : LocalDate.now()).plusDays(1).atStartOfDay();
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private static double nonNull(Double amount) {
+        return amount != null ? amount : 0.0;
     }
 
     private void applyPayments(Bill billRequest) {

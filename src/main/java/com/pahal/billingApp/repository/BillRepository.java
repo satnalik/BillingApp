@@ -110,6 +110,13 @@ public interface BillRepository extends JpaRepository<Bill,Long> {
                                @Param("method") PaymentMethod method);
 
     @Query("""
+            select coalesce(sum(b.dueAmount), 0)
+            from Bill b
+            where coalesce(b.dueAmount, 0) > 0
+            """)
+    Double sumOutstandingDueAmount();
+
+    @Query("""
             select b.salesMan.employeeId as employeeId,
                    b.salesMan.name as name,
                    p.method as method,
