@@ -92,6 +92,7 @@ public class Bill {
     @JoinColumn(name = "bill_id")
     private List<BillItem> items;
 
+    // One bill can have multiple payments (e.g., part cash, part credit)
     @OneToMany(mappedBy = "bill", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("id ASC")
     private Set<BillPayment> payments = new LinkedHashSet<>();

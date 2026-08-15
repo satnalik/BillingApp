@@ -98,7 +98,11 @@ public class PdfGeneratorService {
                     double discountedUnit = unit - (unit * discountPct / 100.0);
                     double lineTotal = discountedUnit * qty;
 
-                    table.addCell(new Phrase(item.getProductName() != null ? item.getProductName() : "-", fontBody));
+                    String productName = item.getProductName() != null ? item.getProductName() : "-";
+                    if (item.getHsnCode() != null && !item.getHsnCode().isBlank()) {
+                        productName += "\nHSN: " + item.getHsnCode();
+                    }
+                    table.addCell(new Phrase(productName, fontBody));
                     table.addCell(new Phrase(String.valueOf(qty), fontBody));
                     table.addCell(new Phrase(String.valueOf(discountPct) + "%", fontBody));
                     table.addCell(new Phrase(String.format("%.2f", lineTotal), fontBody));
@@ -135,7 +139,7 @@ public class PdfGeneratorService {
 
             if (gstApplied) {
                 double pct = (gstRate != null ? gstRate : 0.0) * 100.0;
-                Paragraph gstLine = new Paragraph("GST (" + String.format("%.0f", pct) + "%): \u20B9" + String.format("%.2f", gstAmount != null ? gstAmount : 0.0), fontBodyBold);
+                Paragraph gstLine = new Paragraph("GST" + (pct > 0 ? " (" + String.format("%.0f", pct) + "%)" : "") + ": \u20B9" + String.format("%.2f", gstAmount != null ? gstAmount : 0.0), fontBodyBold);
                 gstLine.setAlignment(Element.ALIGN_RIGHT);
                 document.add(gstLine);
             } else {

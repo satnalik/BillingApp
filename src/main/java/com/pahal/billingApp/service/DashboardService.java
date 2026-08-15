@@ -44,7 +44,8 @@ public class DashboardService {
         response.setTodaySales(round2(nonNull(billRepository.sumTotalAmountBetween(start, end))));
         response.setBillCount(billRepository.countByCreatedAtBetween(start, end));
         response.setCustomerDue(round2(nonNull(billRepository.sumOutstandingDueAmount())));
-        response.setSupplierDue(round2(nonNull(purchaseBillRepository.sumActiveSupplierDueAmount(PurchaseStatus.CANCELLED))));
+        response.setSupplierDue(
+                round2(nonNull(purchaseBillRepository.sumActiveSupplierDueAmount(PurchaseStatus.CANCELLED))));
         response.setLowStockThreshold(threshold);
         response.setLowStockCount(productRepository.countByStockQuantityLessThanEqual(threshold));
 
@@ -55,10 +56,11 @@ public class DashboardService {
             response.getPaymentSplit().put(method, round2(nonNull(amount)));
         }
 
-        response.setLowStockItems(productRepository.findTop10ByStockQuantityLessThanEqualOrderByStockQuantityAsc(threshold)
-                .stream()
-                .map(this::toLowStockProduct)
-                .toList());
+        response.setLowStockItems(
+                productRepository.findTop10ByStockQuantityLessThanEqualOrderByStockQuantityAsc(threshold)
+                        .stream()
+                        .map(this::toLowStockProduct)
+                        .toList());
 
         return response;
     }

@@ -28,6 +28,8 @@ public class BillItem {
     @EqualsAndHashCode.Include
     private Long id;
 
+    private Long productId;
+    private String barcode;
     private String productName;
     private Double quantity;
 
@@ -39,6 +41,10 @@ public class BillItem {
 
     private Double priceAtSale;
     private Double discount;
+    private String hsnCode;
+    private Double gstRate;
+    private Double taxableAmount;
+    private Double gstAmount;
 
     // We don't necessarily need a tenant_id here because
     // it is "owned" by the Bill, which already has a tenant_id.

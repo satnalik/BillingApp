@@ -37,16 +37,24 @@ public class BillResponse {
 
     @Data
     public static class Item {
+        private Long productId;
+        private String barcode;
         private String productName;
         private Double quantity;
         private Double unitSellingPrice;
         private Double discount;
+        private String hsnCode;
+        private Double gstRate;
+        private Double taxableAmount;
+        private Double gstAmount;
     }
 
     @Data
     public static class Payment {
+        private Long id;
         private PaymentMethod method;
         private Double amount;
         private String reference;
+        private LocalDateTime createdAt;
     }
 }

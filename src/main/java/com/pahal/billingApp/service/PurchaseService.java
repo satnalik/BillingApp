@@ -7,12 +7,14 @@ import com.pahal.billingApp.dto.CreatePurchaseBillItemRequest;
 import com.pahal.billingApp.dto.CreatePurchaseBillRequest;
 import com.pahal.billingApp.dto.PurchaseBarcodeLabelResponse;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.ProductBarcode;
 import com.pahal.billingApp.entity.PurchaseBill;
 import com.pahal.billingApp.entity.PurchaseBillItem;
 import com.pahal.billingApp.entity.PurchasePayment;
 import com.pahal.billingApp.entity.Supplier;
 import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.enums.PurchaseStatus;
+import com.pahal.billingApp.repository.ProductBarcodeRepository;
 import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.PurchaseBillRepository;
 import com.pahal.billingApp.repository.SupplierRepository;
@@ -36,6 +38,9 @@ public class PurchaseService {
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private ProductBarcodeRepository productBarcodeRepository;
 
     @Autowired
     private BarcodeService barcodeService;
@@ -212,8 +217,16 @@ public class PurchaseService {
             throw new RuntimeException("Purchase item product is required for barcode generation");
         }
 
-        if (product.getBarcode() == null || product.getBarcode().isBlank()) {
-            product.setBarcode(barcodeService.generateProductBarcode(product, supplier));
+        ProductBarcode primaryBarcode = productBarcodeRepository
+                .findFirstByProductIdAndPrimaryBarcodeTrueOrderByIdAsc(product.getId())
+                .orElse(null);
+        String barcode = item.getBarcode();
+        if (barcode == null || barcode.isBlank()) {
+            barcode = barcodeService.generateProductBarcode(product, supplier);
+            product.setBarcode(barcode);
+            primaryBarcode = createPrimaryBarcode(product, barcode);
+        } else if (primaryBarcode == null) {
+            primaryBarcode = createPrimaryBarcode(product, barcode);
         }
         if (product.getSupplier() == null && supplier != null) {
             product.setSupplier(supplier);
@@ -223,7 +236,7 @@ public class PurchaseService {
         PurchaseBarcodeLabelResponse.Item response = new PurchaseBarcodeLabelResponse.Item();
         response.setProductId(product.getId());
         response.setProductName(item.getProductName() != null ? item.getProductName() : product.getName());
-        response.setBarcode(product.getBarcode());
+        response.setBarcode(primaryBarcode != null ? primaryBarcode.getBarcode() : barcode);
         response.setQuantityReceived(item.getQuantity());
         response.setLabelsToPrint(toLabelCount(item.getQuantity()));
         response.setSellingPrice(item.getSellingPrice() != null ? item.getSellingPrice() : product.getSellingPrice());
@@ -233,6 +246,24 @@ public class PurchaseService {
         return response;
     }
 
+    private ProductBarcode createPrimaryBarcode(Product product, String barcode) {
+        ProductBarcode existing = productBarcodeRepository.findByBarcode(barcode).orElse(null);
+        if (existing != null) {
+            existing.setPrimaryBarcode(true);
+            if (existing.getQuantityPerScan() == null || existing.getQuantityPerScan() <= 0.0) {
+                existing.setQuantityPerScan(1.0);
+            }
+            return productBarcodeRepository.save(existing);
+        }
+
+        ProductBarcode productBarcode = new ProductBarcode();
+        productBarcode.setProduct(product);
+        productBarcode.setBarcode(barcode);
+        productBarcode.setQuantityPerScan(1.0);
+        productBarcode.setPrimaryBarcode(true);
+        return productBarcodeRepository.save(productBarcode);
+    }
+
     private int toLabelCount(Double quantity) {
         if (quantity == null || quantity <= 0.0) return 0;
         return (int) Math.ceil(quantity);
@@ -240,7 +271,6 @@ public class PurchaseService {
 
     private PurchaseBillItem buildItem(CreatePurchaseBillItemRequest itemRequest, String tenantId) {
         if (itemRequest == null) throw new RuntimeException("Purchase item is required");
-        if (itemRequest.getProductId() == null) throw new RuntimeException("Product is required");
         if (itemRequest.getQuantity() == null || itemRequest.getQuantity() <= 0.0) {
             throw new RuntimeException("Quantity must be > 0");
         }
@@ -248,17 +278,65 @@ public class PurchaseService {
             throw new RuntimeException("Purchase price must be >= 0");
         }
 
-        Product product = findProduct(itemRequest.getProductId(), tenantId);
-        double lineTotal = round2(itemRequest.getQuantity() * itemRequest.getPurchasePrice());
+        PurchaseProductResolution resolution = resolvePurchaseProduct(itemRequest, tenantId);
+        Product product = resolution.product();
+        double quantity = round2(itemRequest.getQuantity() * resolution.quantityPerScan());
+        double lineTotal = round2(quantity * itemRequest.getPurchasePrice());
 
         PurchaseBillItem item = new PurchaseBillItem();
         item.setProduct(product);
+        item.setBarcode(resolution.barcodeUsed());
         item.setProductName(product.getName());
-        item.setQuantity(itemRequest.getQuantity());
+        item.setQuantity(quantity);
         item.setPurchasePrice(itemRequest.getPurchasePrice());
         item.setSellingPrice(itemRequest.getSellingPrice());
         item.setLineTotal(lineTotal);
         return item;
+    }
+
+    private PurchaseProductResolution resolvePurchaseProduct(CreatePurchaseBillItemRequest itemRequest, String tenantId) {
+        String barcode = blankToNull(itemRequest.getBarcode());
+        Product product = null;
+        double quantityPerScan = normalizeQuantityPerScan(itemRequest.getQuantityPerScan());
+
+        if (barcode != null) {
+            ProductBarcode productBarcode = productBarcodeRepository.findByBarcode(barcode).orElse(null);
+            if (productBarcode != null) {
+                product = productBarcode.getProduct();
+                quantityPerScan = normalizeQuantityPerScan(productBarcode.getQuantityPerScan());
+            } else if (itemRequest.getProductId() != null) {
+                product = findProduct(itemRequest.getProductId(), tenantId);
+                productBarcode = new ProductBarcode();
+                productBarcode.setProduct(product);
+                productBarcode.setBarcode(barcode);
+                productBarcode.setQuantityPerScan(quantityPerScan);
+                productBarcode.setPrimaryBarcode(false);
+                productBarcodeRepository.save(productBarcode);
+            } else {
+                product = productRepository.findByBarcode(barcode);
+                if (product != null) {
+                    productBarcode = new ProductBarcode();
+                    productBarcode.setProduct(product);
+                    productBarcode.setBarcode(barcode);
+                    productBarcode.setQuantityPerScan(quantityPerScan);
+                    productBarcode.setPrimaryBarcode(false);
+                    productBarcodeRepository.save(productBarcode);
+                }
+            }
+            if (product == null) {
+                throw new RuntimeException("Product not found for barcode: " + barcode);
+            }
+            if (itemRequest.getProductId() != null && !itemRequest.getProductId().equals(product.getId())) {
+                throw new RuntimeException("Barcode does not belong to requested product");
+            }
+            return new PurchaseProductResolution(product, barcode, quantityPerScan);
+        }
+
+        if (itemRequest.getProductId() == null) {
+            throw new RuntimeException("Product is required");
+        }
+        product = findProduct(itemRequest.getProductId(), tenantId);
+        return new PurchaseProductResolution(product, null, quantityPerScan);
     }
 
     private void applyPayment(CreatePurchaseBillRequest request, PurchaseBill bill) {
@@ -313,5 +391,23 @@ public class PurchaseService {
 
     private static double round2(double amount) {
         return Math.round(amount * 100.0) / 100.0;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private static double normalizeQuantityPerScan(Double quantityPerScan) {
+        if (quantityPerScan == null) {
+            return 1.0;
+        }
+        if (quantityPerScan <= 0.0) {
+            throw new RuntimeException("Quantity per scan must be > 0");
+        }
+        return quantityPerScan;
+    }
+
+    private record PurchaseProductResolution(Product product, String barcodeUsed, double quantityPerScan) {
     }
 }

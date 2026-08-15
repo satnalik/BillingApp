@@ -7,6 +7,8 @@ import lombok.Setter;
 @Setter
 public class CreatePurchaseBillItemRequest {
     private Long productId;
+    private String barcode;
+    private Double quantityPerScan;
     private Double quantity;
     private Double purchasePrice;
     private Double sellingPrice;

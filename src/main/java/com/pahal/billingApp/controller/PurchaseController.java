@@ -146,6 +146,7 @@ class PurchaseBillResponseMapper {
         if (item.getProduct() != null) {
             response.setProductId(item.getProduct().getId());
         }
+        response.setBarcode(item.getBarcode());
         response.setProductName(item.getProductName());
         response.setQuantity(item.getQuantity());
         response.setPurchasePrice(item.getPurchasePrice());

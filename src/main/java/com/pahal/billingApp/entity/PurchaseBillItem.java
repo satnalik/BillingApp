@@ -36,6 +36,7 @@ public class PurchaseBillItem {
     @JoinColumn(name = "product_id", nullable = false)
     private Product product;
 
+    private String barcode;
     private String productName;
     private Double quantity;
     private Double purchasePrice;

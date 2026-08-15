@@ -36,6 +36,7 @@ public class PurchaseBillResponse {
     @Setter
     public static class Item {
         private Long productId;
+        private String barcode;
         private String productName;
         private Double quantity;
         private Double purchasePrice;

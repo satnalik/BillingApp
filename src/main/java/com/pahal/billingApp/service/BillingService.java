@@ -11,11 +11,15 @@ import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.entity.BillItem;
 import com.pahal.billingApp.entity.BillPayment;
+import com.pahal.billingApp.entity.Customer;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.ProductBarcode;
 import com.pahal.billingApp.entity.Salesman;
 import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.repository.BillRepository;
 import com.pahal.billingApp.repository.BillPaymentRepository;
+import com.pahal.billingApp.repository.CustomerRepository;
+import com.pahal.billingApp.repository.ProductBarcodeRepository;
 import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SalesManRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,6 +59,9 @@ public class BillingService {
     private ProductRepository productRepository;
 
     @Autowired
+    private ProductBarcodeRepository productBarcodeRepository;
+
+    @Autowired
     private BillRepository billRepository;
 
     @Autowired
@@ -64,7 +71,7 @@ public class BillingService {
     private SalesManRepository salesManRepository;
 
     @Autowired
-    private TenantSettingsService tenantSettingsService;
+    private CustomerRepository customerRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -291,17 +298,7 @@ public class BillingService {
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new RuntimeException("At least one item is required");
         }
-
-        List<BillItem> billItems = new ArrayList<>();
-        for (CreateBillItemRequest itemReq : request.getItems()) {
-            BillItem item = new BillItem();
-            item.setProductName(itemReq.getProductName());
-            item.setQuantity(itemReq.getQuantity());
-            item.setDiscount(itemReq.getDiscount() != null ? itemReq.getDiscount() : 0.0);
-            item.setUnitSellingPrice(itemReq.getUnitSellingPrice());
-            billItems.add(item);
-        }
-        billRequest.setItems(billItems);
+        createCustomerIfFirstBillEntry(request.getCustomerName(), request.getContactInfo());
 
         if (request.getPayments() != null && !request.getPayments().isEmpty()) {
             List<BillPayment> payments = new ArrayList<>();
@@ -316,19 +313,28 @@ public class BillingService {
         }
 
         double taxableTotal = 0;
+        double gstTotal = 0;
 
-        for (BillItem item : billRequest.getItems()) {
-            // 1. Find product
-            Product product = productRepository.findByName(item.getProductName());
-            if (product == null) throw new RuntimeException("Product not found: " + item.getProductName());
+        List<BillItem> billItems = new ArrayList<>();
+        for (CreateBillItemRequest itemReq : request.getItems()) {
+            ProductResolution resolution = resolveProduct(itemReq);
+            Product product = resolution.product();
+            double requestedQuantity = normalizeRequestedQuantity(itemReq.getQuantity());
+            double effectiveQuantity = round2(requestedQuantity * resolution.quantityPerScan());
 
-            // 2. Stock Check
-            if (product.getStockQuantity() < item.getQuantity()) {
+            BillItem item = new BillItem();
+            item.setProductId(product.getId());
+            item.setBarcode(resolution.barcodeUsed());
+            item.setProductName(product.getName());
+            item.setQuantity(effectiveQuantity);
+            item.setDiscount(itemReq.getDiscount() != null ? itemReq.getDiscount() : 0.0);
+            item.setUnitSellingPrice(itemReq.getUnitSellingPrice());
+
+            if (nonNull(product.getStockQuantity()) < effectiveQuantity) {
                 throw new RuntimeException("Insufficient stock for: " + product.getName());
             }
-            product.setStockQuantity(product.getStockQuantity() - item.getQuantity());
+            product.setStockQuantity(round2(nonNull(product.getStockQuantity()) - effectiveQuantity));
 
-            // 3. Calculation Fix: (Price - (Price * Disc / 100)) * Qty
             Double defaultPrice = product.getSellingPrice() != null ? product.getSellingPrice() : product.getPrice();
             double unitSellingPrice = item.getUnitSellingPrice() != null ? item.getUnitSellingPrice() : (defaultPrice != null ? defaultPrice : 0.0);
             item.setUnitSellingPrice(unitSellingPrice);
@@ -337,16 +343,23 @@ public class BillingService {
 
             double discountPct = item.getDiscount() != null ? item.getDiscount() : 0.0;
             double discountedPrice = unitSellingPrice - (unitSellingPrice * discountPct / 100);
-            taxableTotal += (discountedPrice * item.getQuantity());
+            double lineTaxable = round2(discountedPrice * item.getQuantity());
+            double lineGstRate = product.getGstRate() != null ? product.getGstRate() : 0.0;
+            double lineGstAmount = round2(lineTaxable * lineGstRate);
+
+            item.setHsnCode(product.getHsnCode());
+            item.setGstRate(lineGstRate);
+            item.setTaxableAmount(lineTaxable);
+            item.setGstAmount(lineGstAmount);
+
+            taxableTotal += lineTaxable;
+            gstTotal += lineGstAmount;
+            billItems.add(item);
         }
-
-        var settings = tenantSettingsService.getOrCreateCurrentTenantSettings();
-
-        boolean gstEnabled = settings.isGstEnabled();
-        double gstRate = settings.getGstRate();
+        billRequest.setItems(billItems);
 
         double subTotal = round2(taxableTotal);
-        double gstAmount = gstEnabled ? round2(subTotal * gstRate) : 0.0;
+        double gstAmount = round2(gstTotal);
         double grandTotal = round2(subTotal + gstAmount);
 
         double instantDiscount = request.getInstantDiscountAmount() != null ? request.getInstantDiscountAmount() : 0.0;
@@ -361,8 +374,8 @@ public class BillingService {
         }
 
         billRequest.setSubTotalAmount(subTotal);
-        billRequest.setGstApplied(gstEnabled);
-        billRequest.setGstRate(gstEnabled ? gstRate : 0.0);
+        billRequest.setGstApplied(gstAmount > 0.0001);
+        billRequest.setGstRate(0.0);
         billRequest.setGstAmount(gstAmount);
         billRequest.setInstantDiscountAmount(instantDiscount > 0.0001 ? round2(instantDiscount) : 0.0);
         billRequest.setTotalAmount(grandTotal);
@@ -370,6 +383,105 @@ public class BillingService {
         applyPayments(billRequest);
 
         return billRepository.save(billRequest);
+    }
+
+    private void createCustomerIfFirstBillEntry(String customerName, String contactInfo) {
+        String contactNumber = blankToNull(contactInfo);
+        if (contactNumber == null) {
+            return;
+        }
+
+        Customer existing = customerRepository.findByContactNumber(contactNumber).orElse(null);
+        if (existing != null) {
+            if (blankToNull(existing.getName()) == null && blankToNull(customerName) != null) {
+                existing.setName(customerName.trim());
+                customerRepository.save(existing);
+            }
+            return;
+        }
+
+        Customer customer = new Customer();
+        customer.setName(blankToNull(customerName));
+        customer.setContactNumber(contactNumber);
+        customerRepository.save(customer);
+    }
+
+    private ProductResolution resolveProduct(CreateBillItemRequest itemReq) {
+        if (itemReq == null) {
+            throw new RuntimeException("Bill item is required");
+        }
+
+        String barcode = blankToNull(itemReq.getBarcode());
+        if (barcode != null) {
+            ProductBarcode linkedBarcode = productBarcodeRepository.findByBarcode(barcode).orElse(null);
+            if (linkedBarcode != null) {
+                Product product = linkedBarcode.getProduct();
+                assertRequestedProductMatchesBarcode(itemReq.getProductId(), product);
+                return new ProductResolution(
+                        product,
+                        linkedBarcode.getBarcode(),
+                        normalizeQuantityPerScan(linkedBarcode.getQuantityPerScan()));
+            }
+
+            Product product = productRepository.findByBarcode(barcode);
+            if (product == null) {
+                throw new RuntimeException("Product not found for barcode: " + barcode);
+            }
+            assertRequestedProductMatchesBarcode(itemReq.getProductId(), product);
+            return new ProductResolution(product, barcode, 1.0);
+        }
+
+        if (itemReq.getProductId() != null) {
+            Product product = findProduct(itemReq.getProductId());
+            return new ProductResolution(product, null, 1.0);
+        }
+
+        String productName = blankToNull(itemReq.getProductName());
+        if (productName == null) {
+            throw new RuntimeException("Product id, barcode, or product name is required");
+        }
+
+        Product product = productRepository.findByName(productName);
+        if (product == null) {
+            throw new RuntimeException("Product not found: " + productName);
+        }
+        return new ProductResolution(product, null, 1.0);
+    }
+
+    private Product findProduct(Long productId) {
+        String tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            return productRepository.findById(productId)
+                    .orElseThrow(() -> new RuntimeException("Product not found"));
+        }
+        return productRepository.findByIdAndTenantId(productId, tenantId)
+                .orElseThrow(() -> new RuntimeException("Product not found"));
+    }
+
+    private void assertRequestedProductMatchesBarcode(Long requestedProductId, Product product) {
+        if (requestedProductId == null || product == null || product.getId() == null) {
+            return;
+        }
+        if (!requestedProductId.equals(product.getId())) {
+            throw new RuntimeException("Barcode does not belong to requested product");
+        }
+    }
+
+    private static double normalizeRequestedQuantity(Double quantity) {
+        if (quantity == null || quantity <= 0.0) {
+            throw new RuntimeException("Quantity must be > 0");
+        }
+        return quantity;
+    }
+
+    private static double normalizeQuantityPerScan(Double quantityPerScan) {
+        if (quantityPerScan == null) {
+            return 1.0;
+        }
+        if (quantityPerScan <= 0.0) {
+            throw new RuntimeException("Quantity per scan must be > 0");
+        }
+        return quantityPerScan;
     }
 
     @Transactional
@@ -586,5 +698,8 @@ public class BillingService {
 
     private static double round2(double amount) {
         return Math.round(amount * 100.0) / 100.0;
+    }
+
+    private record ProductResolution(Product product, String barcodeUsed, double quantityPerScan) {
     }
 }

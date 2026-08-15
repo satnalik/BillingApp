@@ -179,10 +179,16 @@ class BillResponseMapper {
             r.setItems(
                     bill.getItems().stream().map(i -> {
                         BillResponse.Item it = new BillResponse.Item();
+                        it.setProductId(i.getProductId());
+                        it.setBarcode(i.getBarcode());
                         it.setProductName(i.getProductName());
                         it.setQuantity(i.getQuantity());
                         it.setUnitSellingPrice(i.getUnitSellingPrice());
                         it.setDiscount(i.getDiscount());
+                        it.setHsnCode(i.getHsnCode());
+                        it.setGstRate(i.getGstRate());
+                        it.setTaxableAmount(i.getTaxableAmount());
+                        it.setGstAmount(i.getGstAmount());
                         return it;
                     }).toList());
         }
@@ -191,9 +197,11 @@ class BillResponseMapper {
             r.setPayments(
                     bill.getPayments().stream().map(p -> {
                         BillResponse.Payment pr = new BillResponse.Payment();
+                        pr.setId(p.getId());
                         pr.setMethod(p.getMethod());
                         pr.setAmount(p.getAmount());
                         pr.setReference(p.getReference());
+                        pr.setCreatedAt(p.getCreatedAt());
                         return pr;
                     }).toList());
         }

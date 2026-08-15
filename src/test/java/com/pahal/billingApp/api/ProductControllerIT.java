@@ -1,9 +1,11 @@
 package com.pahal.billingApp.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pahal.billingApp.dto.AddProductBarcodeRequest;
 import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.Supplier;
 import com.pahal.billingApp.context.TenantContext;
+import com.pahal.billingApp.repository.ProductBarcodeRepository;
 import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SupplierRepository;
 import org.junit.jupiter.api.Test;
@@ -30,6 +32,7 @@ class ProductControllerIT {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @Autowired ProductRepository productRepository;
+    @Autowired ProductBarcodeRepository productBarcodeRepository;
     @Autowired SupplierRepository supplierRepository;
 
     @Test
@@ -225,6 +228,62 @@ class ProductControllerIT {
             mockMvc.perform(get("/api/products/barcode/{barcode}", "8901234567890")
                             .param("supplierId", otherSupplier.getId().toString()))
                     .andExpect(status().isNotFound());
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void addBarcode_linksAdditionalBarcodeToSameProduct() throws Exception {
+        TenantContext.setCurrentTenant(TENANT);
+        try {
+            Product product = new Product();
+            product.setBarcode("BISCUIT-BOX-OLD");
+            product.setName("Biscuit Pack");
+            product.setSellingPrice(5.0);
+            product.setPrice(5.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(10.0);
+
+            String productJson = mockMvc.perform(
+                            post("/api/products")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(product))
+                    )
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.barcode").value("BISCUIT-BOX-OLD"))
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
+
+            long productId = objectMapper.readTree(productJson).get("id").asLong();
+
+            AddProductBarcodeRequest barcodeRequest = new AddProductBarcodeRequest();
+            barcodeRequest.setBarcode("BISCUIT-BOX-NEW");
+            barcodeRequest.setQuantityPerScan(10.0);
+
+            TenantContext.setCurrentTenant(TENANT);
+            mockMvc.perform(
+                            post("/api/products/{productId}/barcodes", productId)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(barcodeRequest))
+                    )
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.barcode").value("BISCUIT-BOX-NEW"))
+                    .andExpect(jsonPath("$.quantityPerScan").value(10.0));
+
+            TenantContext.setCurrentTenant(TENANT);
+            mockMvc.perform(get("/api/products/barcode/{barcode}", "BISCUIT-BOX-NEW"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(productId))
+                    .andExpect(jsonPath("$.name").value("Biscuit Pack"));
+
+            TenantContext.setCurrentTenant(TENANT);
+            assertThat(productBarcodeRepository.findByBarcode("BISCUIT-BOX-NEW"))
+                    .isPresent()
+                    .get()
+                    .extracting(barcode -> barcode.getProduct().getId())
+                    .isEqualTo(productId);
         } finally {
             TenantContext.clear();
         }

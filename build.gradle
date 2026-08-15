@@ -4,21 +4,21 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.7'
 }
 
-plugins {
-	id "com.microsoft.azure.azurewebapp" version "1.10.0"
-}
-
-azurewebapp {
-	subscription = 'your-subscription-id'
-	resourceGroup = 'pahal-retail-resources'
-	appName = 'pahal-billing'
-	pricingTier = 'F1' // Free tier for testing
-	region = 'centralindia' // Best for your location in Bengaluru
-	runtime {
-		os = 'Linux'
-		webContainer = 'Java 17' // Match your project version
-	}
-}
+//plugins {
+//	id "com.microsoft.azure.azurewebapp" version "1.10.0"
+//}
+//
+//azurewebapp {
+//	subscription = 'your-subscription-id'
+//	resourceGroup = 'pahal-retail-resources'
+//	appName = 'pahal-billing'
+//	pricingTier = 'F1' // Free tier for testing
+//	region = 'centralindia' // Best for your location in Bengaluru
+//	runtime {
+//		os = 'Linux'
+//		webContainer = 'Java 17' // Match your project version
+//	}
+//}
 
 group = 'com.pahal.billingApp'
 version = '0.0.1-SNAPSHOT'

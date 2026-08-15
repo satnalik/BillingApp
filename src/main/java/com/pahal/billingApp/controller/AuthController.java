@@ -50,12 +50,12 @@ public class AuthController {
                 String userTenantId = userData.getTenantId();
                 Role role = userData.getRole();
                 String token = jwtService.generateToken(request.getUserId(), userTenantId, role);
-                return ResponseEntity.ok(Collections.singletonMap("token", token));
-                // return new ResponseEntity<>("User login successful",HttpStatus.OK);
-//                Map userMap = new HashMap();
-//                userMap.put("token", token);
-//                userMap.put("UserData", userData);
-//                return ResponseEntity.ok(userMap);
+//                return ResponseEntity.ok(Collections.singletonMap("token", token));
+//                return new ResponseEntity<>("User login successful",HttpStatus.OK);
+                Map userMap = new HashMap();
+                userMap.put("token", token);
+                userMap.put("UserData", userData);
+                return new ResponseEntity<>(userMap,HttpStatus.OK);
 
             }
         }

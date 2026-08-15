@@ -70,6 +70,8 @@ public class Product {
     private Double sellingPrice;
     private Double stockQuantity;
     private String category;
+    private String hsnCode;
+    private Double gstRate;
 
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;

@@ -1,8 +1,8 @@
 package com.pahal.billingApp.controller;
 
+import com.pahal.billingApp.dto.AddProductBarcodeRequest;
 import com.pahal.billingApp.entity.Product;
-import com.pahal.billingApp.entity.User;
-import com.pahal.billingApp.repository.ProductRepository;
+import com.pahal.billingApp.entity.ProductBarcode;
 import com.pahal.billingApp.security.CustomUserDetails;
 import com.pahal.billingApp.service.ProductService;
 
@@ -60,6 +60,20 @@ public class ProductController {
     @PostMapping("/barcode")
     public ResponseEntity<Product> upsertByBarcode(@RequestBody Product product) {
         return ResponseEntity.ok(productService.upsertByBarcode(product));
+    }
+
+    @Operation(summary = "Get Product Barcodes", description = "Returns all barcodes linked to a product.")
+    @GetMapping("/{productId}/barcodes")
+    public ResponseEntity<List<ProductBarcode>> getBarcodes(@PathVariable Long productId) {
+        return ResponseEntity.ok(productService.getBarcodes(productId));
+    }
+
+    @Operation(summary = "Add Product Barcode", description = "Links an additional barcode to an existing product.")
+    @PostMapping("/{productId}/barcodes")
+    public ResponseEntity<ProductBarcode> addBarcode(
+            @PathVariable Long productId,
+            @RequestBody AddProductBarcodeRequest request) {
+        return ResponseEntity.ok(productService.addBarcode(productId, request));
     }
 
     @Operation(summary = "Search Products", description = "Searches for products by name. Tenant scoping is enforced by Hibernate filter.")
