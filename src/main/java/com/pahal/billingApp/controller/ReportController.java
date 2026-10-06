@@ -2,6 +2,7 @@ package com.pahal.billingApp.controller;
 
 import com.pahal.billingApp.dto.DayEndReportResponse;
 import com.pahal.billingApp.dto.DailyReportResponse;
+import com.pahal.billingApp.dto.ProductSalesReportResponse;
 import com.pahal.billingApp.dto.SalesReportDTO;
 import com.pahal.billingApp.dto.SalesReportResponse;
 import com.pahal.billingApp.service.ReportService;
@@ -51,6 +52,21 @@ public class ReportController {
         LocalDate fromDate = LocalDate.parse(from);
         LocalDate toDate = LocalDate.parse(to);
         return ResponseEntity.ok(reportService.buildRangeReport(fromDate, toDate));
+    }
+
+    @Operation(summary = "Product Wise Sales And Revenue", description = "Returns product-level quantity, revenue, discount, GST, and current stock for a date range.")
+    @GetMapping("/product-sales")
+    public ResponseEntity<ProductSalesReportResponse> productSales(
+            @RequestParam("from") String from,
+            @RequestParam("to") String to,
+            @RequestParam(required = false) String productName,
+            @RequestParam(required = false) String barcode,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String salesmanId) {
+        LocalDate fromDate = LocalDate.parse(from);
+        LocalDate toDate = LocalDate.parse(to);
+        return ResponseEntity.ok(reportService.buildProductSalesReport(
+                fromDate, toDate, productName, barcode, category, salesmanId));
     }
 
     @Operation(summary = "Sales Report", description = "Generates a sales report for a specific date range.")

@@ -1,6 +1,7 @@
 package com.pahal.billingApp.dto;
 
 import com.pahal.billingApp.enums.PaymentMethod;
+import com.pahal.billingApp.enums.BillStatus;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -31,6 +32,11 @@ public class BillResponse {
 
     private Double paidAmount;
     private Double dueAmount;
+    private BillStatus status;
+    private String cancelReason;
+    private LocalDateTime cancelledAt;
+    private String returnReason;
+    private LocalDateTime lastReturnedAt;
 
     private List<Item> items;
     private List<Payment> payments;
@@ -41,6 +47,8 @@ public class BillResponse {
         private String barcode;
         private String productName;
         private Double quantity;
+        private Double returnedQuantity;
+        private Double netQuantity;
         private Double unitSellingPrice;
         private Double discount;
         private String hsnCode;

@@ -3,6 +3,8 @@ package com.pahal.billingApp.service;
 import com.pahal.billingApp.dto.DayEndReportResponse;
 import com.pahal.billingApp.dto.DailyReportResponse;
 import com.pahal.billingApp.dto.PaymentMethodAggProjection;
+import com.pahal.billingApp.dto.ProductSalesAggProjection;
+import com.pahal.billingApp.dto.ProductSalesReportResponse;
 import com.pahal.billingApp.dto.ReportAggProjection;
 import com.pahal.billingApp.dto.SalesReportDTO;
 import com.pahal.billingApp.dto.SalesReportResponse;
@@ -83,6 +85,80 @@ public class ReportService {
         return report;
     }
 
+    @Cacheable(cacheNames = "reports", key = "T(com.pahal.billingApp.context.TenantContext).getCurrentTenant() + ':productSales:' + #from + ':' + #to + ':' + #productName + ':' + #barcode + ':' + #category + ':' + #salesmanId")
+    public ProductSalesReportResponse buildProductSalesReport(
+            LocalDate from,
+            LocalDate to,
+            String productName,
+            String barcode,
+            String category,
+            String salesmanId) {
+        LocalDate startDay = from != null ? from : LocalDate.now();
+        LocalDate endDay = to != null ? to : startDay;
+        LocalDateTime start = startDay.atStartOfDay();
+        LocalDateTime end = endDay.plusDays(1).atStartOfDay();
+
+        List<ProductSalesReportResponse.ProductSalesItem> items = new ArrayList<>();
+        String tenantId = TenantContext.getCurrentTenant();
+        String normalizedProductName = blankToNull(productName);
+        String normalizedBarcode = blankToNull(barcode);
+        String normalizedCategory = blankToNull(category);
+        String normalizedSalesmanId = blankToNull(salesmanId);
+
+        for (ProductSalesAggProjection row : billRepository.findProductSales(
+                tenantId,
+                start,
+                end,
+                normalizedProductName,
+                normalizedBarcode,
+                normalizedCategory,
+                normalizedSalesmanId)) {
+            ProductSalesReportResponse.ProductSalesItem item = new ProductSalesReportResponse.ProductSalesItem();
+            item.setProductId(row.getProductId());
+            item.setProductName(row.getProductName());
+            item.setBarcode(row.getBarcode());
+            item.setCategory(row.getCategory());
+            item.setHsnCode(row.getHsnCode());
+            item.setCurrentStock(row.getCurrentStock());
+            item.setQuantitySold(round2(nonNull(row.getQuantitySold())));
+            item.setBillsCount(row.getBillsCount() != null ? row.getBillsCount() : 0L);
+            item.setGrossRevenue(round2(nonNull(row.getGrossRevenue())));
+            item.setDiscountAmount(round2(nonNull(row.getDiscountAmount())));
+            item.setTaxableRevenue(round2(nonNull(row.getTaxableRevenue())));
+            item.setGstAmount(round2(nonNull(row.getGstAmount())));
+            item.setNetRevenue(round2(nonNull(row.getNetRevenue())));
+            item.setAverageSellingPrice(item.getQuantitySold() > 0.0
+                    ? round2(item.getNetRevenue() / item.getQuantitySold())
+                    : 0.0);
+            items.add(item);
+        }
+
+        ProductSalesReportResponse response = new ProductSalesReportResponse();
+        response.setPeriodStart(start.toString());
+        response.setPeriodEnd(end.toString());
+        response.setItems(items);
+        response.setProducts(items.size());
+        response.setQuantitySold(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getQuantitySold).sum()));
+        response.setGrossRevenue(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getGrossRevenue).sum()));
+        response.setDiscountAmount(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getDiscountAmount).sum()));
+        response.setTaxableRevenue(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getTaxableRevenue).sum()));
+        response.setGstAmount(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getGstAmount).sum()));
+        response.setTotalRevenue(round2(items.stream().mapToDouble(ProductSalesReportResponse.ProductSalesItem::getNetRevenue).sum()));
+        response.setBills(billRepository.countProductSalesBills(
+                tenantId,
+                start,
+                end,
+                normalizedProductName,
+                normalizedBarcode,
+                normalizedCategory,
+                normalizedSalesmanId));
+        response.setTopProductByRevenue(items.isEmpty() ? null : items.get(0));
+        response.setTopProductByQuantity(items.stream()
+                .max(Comparator.comparingDouble(ProductSalesReportResponse.ProductSalesItem::getQuantitySold))
+                .orElse(null));
+        return response;
+    }
+
     private SalesReportResponse buildSalesReport(LocalDateTime start, LocalDateTime endExclusive) {
         SalesReportResponse response = new SalesReportResponse();
         response.setBills(billRepository.countByCreatedAtBetween(start, endExclusive));
@@ -93,7 +169,7 @@ public class ReportService {
         );
         response.setItems(
                 billRepository.sumItemsQuantityBetween(start, endExclusive) != null
-                        ? billRepository.sumItemsQuantityBetween(start, endExclusive)
+                        ? Math.round(billRepository.sumItemsQuantityBetween(start, endExclusive))
                         : 0L
         );
 
@@ -101,7 +177,7 @@ public class ReportService {
         for (ReportAggProjection row : billRepository.findProductBreakdown(start, endExclusive)) {
             productBreakdown.add(new DailyReportResponse.ProductSummary(
                     row.getName(),
-                    row.getQty() != null ? row.getQty() : 0L
+                    row.getQty() != null ? Math.round(row.getQty().doubleValue()) : 0L
             ));
         }
         response.setProductBreakdown(productBreakdown);
@@ -119,6 +195,19 @@ public class ReportService {
         response.setTopSalesman(salesmanBreakdown.isEmpty() ? null : salesmanBreakdown.get(0));
 
         return response;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null || value.isBlank()) return null;
+        return value.trim();
+    }
+
+    private static double nonNull(Double amount) {
+        return amount != null ? amount : 0.0;
+    }
+
+    private static double round2(double amount) {
+        return Math.round(amount * 100.0) / 100.0;
     }
 
     public List<SalesReportDTO> getSalesReport(String start, String end) {

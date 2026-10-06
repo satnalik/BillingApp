@@ -1,6 +1,7 @@
 package com.pahal.billingApp.entity;
 
 import com.pahal.billingApp.context.TenantContext;
+import com.pahal.billingApp.enums.BillStatus;
 import jakarta.persistence.*;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -84,6 +85,14 @@ public class Bill {
      */
     private Double dueAmount;
 
+    @Enumerated(EnumType.STRING)
+    private BillStatus status = BillStatus.ACTIVE;
+
+    private String cancelReason;
+    private LocalDateTime cancelledAt;
+    private String returnReason;
+    private LocalDateTime lastReturnedAt;
+
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;
 
@@ -101,6 +110,9 @@ public class Bill {
     @PrePersist
     public void onPrePersist() {
         this.createdAt = LocalDateTime.now();
+        if (this.status == null) {
+            this.status = BillStatus.ACTIVE;
+        }
         String currentTenant = TenantContext.getCurrentTenant();
         if (currentTenant != null) {
             this.tenantId = currentTenant;

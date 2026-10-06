@@ -4,9 +4,12 @@ import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.entity.BillItem;
 import com.pahal.billingApp.entity.BillPayment;
+import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.Salesman;
+import com.pahal.billingApp.enums.ItemType;
 import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.repository.BillRepository;
+import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SalesManRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +33,90 @@ class ReportControllerIT {
     @Autowired MockMvc mockMvc;
     @Autowired SalesManRepository salesManRepository;
     @Autowired BillRepository billRepository;
+    @Autowired ProductRepository productRepository;
+
+    @Test
+    void productSales_returnsProductWiseRevenueAndDoesNotLeakAcrossTenants() throws Exception {
+        LocalDate day = LocalDate.now();
+        String tenant = "Tenant-Product-Sales";
+        String otherTenant = "Tenant-Product-Sales-Other";
+
+        TenantContext.setCurrentTenant(tenant);
+        try {
+            Salesman salesman = new Salesman();
+            salesman.setEmployeeId("PS-1");
+            salesman.setName("Product Seller");
+            salesManRepository.save(salesman);
+
+            Product widget = product("PS-WIDGET", "Widget", "Tools", 7.0);
+            widget = productRepository.save(widget);
+
+            Product gadget = product("PS-GADGET", "Gadget", "Tools", 3.0);
+            gadget = productRepository.save(gadget);
+
+            Bill firstBill = bill(salesman, 262.4, List.of(
+                    item(widget, 2.0, 100.0, 10.0, 180.0, 32.4),
+                    item(gadget, 1.0, 50.0, 0.0, 50.0, 0.0)
+            ));
+            billRepository.save(firstBill);
+
+            Bill secondBill = bill(salesman, 141.6, List.of(
+                    item(widget, 1.0, 120.0, 0.0, 120.0, 21.6)
+            ));
+            billRepository.save(secondBill);
+        } finally {
+            TenantContext.clear();
+        }
+
+        TenantContext.setCurrentTenant(otherTenant);
+        try {
+            Salesman salesman = new Salesman();
+            salesman.setEmployeeId("PS-OTHER");
+            salesman.setName("Other Seller");
+            salesManRepository.save(salesman);
+
+            Product product = product("PS-OTHER", "Other Widget", "Tools", 99.0);
+            product = productRepository.save(product);
+            billRepository.save(bill(salesman, 999.0, List.of(
+                    item(product, 1.0, 999.0, 0.0, 999.0, 0.0)
+            )));
+        } finally {
+            TenantContext.clear();
+        }
+
+        TenantContext.setCurrentTenant(tenant);
+        try {
+            mockMvc.perform(get("/api/reports/product-sales")
+                            .param("from", day.toString())
+                            .param("to", day.toString()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalRevenue").value(404.0))
+                    .andExpect(jsonPath("$.taxableRevenue").value(350.0))
+                    .andExpect(jsonPath("$.gstAmount").value(54.0))
+                    .andExpect(jsonPath("$.grossRevenue").value(370.0))
+                    .andExpect(jsonPath("$.discountAmount").value(20.0))
+                    .andExpect(jsonPath("$.quantitySold").value(4.0))
+                    .andExpect(jsonPath("$.bills").value(2))
+                    .andExpect(jsonPath("$.products").value(2))
+                    .andExpect(jsonPath("$.topProductByRevenue.productName").value("Widget"))
+                    .andExpect(jsonPath("$.topProductByQuantity.productName").value("Widget"))
+                    .andExpect(jsonPath("$.items[?(@.productName=='Widget' && @.quantitySold==3.0 && @.billsCount==2 && @.netRevenue==354.0 && @.averageSellingPrice==118.0 && @.currentStock==7.0)]").exists())
+                    .andExpect(jsonPath("$.items[?(@.productName=='Gadget' && @.quantitySold==1.0 && @.billsCount==1 && @.netRevenue==50.0)]").exists())
+                    .andExpect(jsonPath("$.items[?(@.productName=='Other Widget')]").doesNotExist());
+
+            TenantContext.setCurrentTenant(tenant);
+            mockMvc.perform(get("/api/reports/product-sales")
+                            .param("from", day.toString())
+                            .param("to", day.toString())
+                            .param("productName", "wid"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalRevenue").value(354.0))
+                    .andExpect(jsonPath("$.products").value(1))
+                    .andExpect(jsonPath("$.items[0].productName").value("Widget"));
+        } finally {
+            TenantContext.clear();
+        }
+    }
 
     @Test
     void dayEnd_doesNotLeakAcrossTenants() throws Exception {
@@ -94,5 +181,49 @@ class ReportControllerIT {
         } finally {
             TenantContext.clear();
         }
+    }
+
+    private Product product(String barcode, String name, String category, double stockQuantity) {
+        Product product = new Product();
+        product.setBarcode(barcode);
+        product.setName(name);
+        product.setCategory(category);
+        product.setHsnCode("HSN-" + barcode);
+        product.setSellingPrice(100.0);
+        product.setPrice(100.0);
+        product.setItemType(ItemType.PACKAGE);
+        product.setStockQuantity(stockQuantity);
+        return product;
+    }
+
+    private Bill bill(Salesman salesman, double totalAmount, List<BillItem> items) {
+        Bill bill = new Bill();
+        bill.setCustomerName("Product Sales Customer");
+        bill.setContactInfo("9000000000");
+        bill.setSalesMan(salesman);
+        bill.setSubTotalAmount(items.stream().mapToDouble(i -> i.getTaxableAmount() != null ? i.getTaxableAmount() : 0.0).sum());
+        bill.setGstAmount(items.stream().mapToDouble(i -> i.getGstAmount() != null ? i.getGstAmount() : 0.0).sum());
+        bill.setGstApplied(bill.getGstAmount() > 0.0);
+        bill.setTotalAmount(totalAmount);
+        bill.setPaidAmount(totalAmount);
+        bill.setDueAmount(0.0);
+        bill.setItems(items);
+        return bill;
+    }
+
+    private BillItem item(Product product, double quantity, double unitPrice, double discount, double taxableAmount, double gstAmount) {
+        BillItem item = new BillItem();
+        item.setProductId(product.getId());
+        item.setBarcode(product.getBarcode());
+        item.setProductName(product.getName());
+        item.setQuantity(quantity);
+        item.setUnitSellingPrice(unitPrice);
+        item.setPriceAtSale(unitPrice);
+        item.setDiscount(discount);
+        item.setHsnCode(product.getHsnCode());
+        item.setGstRate(gstAmount > 0.0 && taxableAmount > 0.0 ? gstAmount / taxableAmount : 0.0);
+        item.setTaxableAmount(taxableAmount);
+        item.setGstAmount(gstAmount);
+        return item;
     }
 }

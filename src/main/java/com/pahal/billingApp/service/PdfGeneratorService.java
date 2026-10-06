@@ -11,6 +11,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import java.util.Set;
 
 @Service
 public class PdfGeneratorService {
@@ -19,7 +20,7 @@ public class PdfGeneratorService {
         // POS receipt printers are typically 80mm wide; render a receipt-sized PDF instead of A4.
         float receiptWidthPt = 226.77f; // ~80mm in points
         int itemCount = bill.getItems() != null ? bill.getItems().size() : 0;
-        float estimatedHeightPt = Math.max(420f, 260f + (itemCount * 18f));
+        float estimatedHeightPt = 350f + (itemCount * 30f);
         Rectangle receiptPage = new Rectangle(receiptWidthPt, estimatedHeightPt);
 
         Document document = new Document(receiptPage, 8f, 8f, 10f, 10f);
@@ -44,7 +45,7 @@ public class PdfGeneratorService {
                 Paragraph tenant = new Paragraph(bill.getTenantId(), fontBodyBold);
                 tenant.setAlignment(Element.ALIGN_CENTER);
                 document.add(tenant);
-                Paragraph tenant_address = new Paragraph("55 CR Road, Raniganj, Paschim Bardhaman, WB-713347", fontBody);
+                Paragraph tenant_address = new Paragraph("Electronic City, Bangalore-560100, Contact - 7318733122", fontBody);
                 tenant_address.setAlignment(Element.ALIGN_CENTER);
                 document.add(tenant_address);
             }
@@ -81,22 +82,25 @@ public class PdfGeneratorService {
             document.add(line2);
 
             // 3. Items
+            int totalQty = 0;
             PdfPTable table = new PdfPTable(4);
             table.setWidthPercentage(100);
-            table.setWidths(new float[]{2.2f, 0.7f, 0.9f, 1.0f});
+            table.setWidths(new float[]{3.0f, 0.6f, 0.8f, 0.9f});
             table.setHorizontalAlignment(Element.ALIGN_CENTER);
             table.getDefaultCell().setBorder(Rectangle.NO_BORDER);
             table.addCell(new Phrase("Item", fontBodyBold));
             table.addCell(new Phrase("Qty", fontBodyBold));
-            table.addCell(new Phrase("Disc%", fontBodyBold));
+            table.addCell(new Phrase("Rate", fontBodyBold));
             table.addCell(new Phrase("Amt", fontBodyBold));
             if (bill.getItems() != null) {
+
                 for (BillItem item : bill.getItems()) {
                     double qty = item.getQuantity() != null ? item.getQuantity() : 0.0;
                     double unit = item.getPriceAtSale() != null ? item.getPriceAtSale() : 0.0;
-                    double discountPct = item.getDiscount() != null ? item.getDiscount() : 0.0;
-                    double discountedUnit = unit - (unit * discountPct / 100.0);
-                    double lineTotal = discountedUnit * qty;
+                    double ratePerunit = item.getUnitSellingPrice() != null ? item.getUnitSellingPrice() : 0.0;
+//                    double discountedUnit = unit - (unit * ratePerunit / 100.0);
+                    double lineTotal = ratePerunit * qty;
+                    totalQty = totalQty + (int) qty;
 
                     String productName = item.getProductName() != null ? item.getProductName() : "-";
                     if (item.getHsnCode() != null && !item.getHsnCode().isBlank()) {
@@ -104,7 +108,7 @@ public class PdfGeneratorService {
                     }
                     table.addCell(new Phrase(productName, fontBody));
                     table.addCell(new Phrase(String.valueOf(qty), fontBody));
-                    table.addCell(new Phrase(String.valueOf(discountPct) + "%", fontBody));
+                    table.addCell(new Phrase(String.valueOf(ratePerunit), fontBody));
                     table.addCell(new Phrase(String.format("%.2f", lineTotal), fontBody));
                 }
             }
@@ -135,6 +139,11 @@ public class PdfGeneratorService {
                 Paragraph subTotalLine = new Paragraph("SUBTOTAL: \u20B9" + String.format("%.2f", subTotal), fontBodyBold);
                 subTotalLine.setAlignment(Element.ALIGN_RIGHT);
                 document.add(subTotalLine);
+            }
+            if ( totalQty != 0) {
+                Paragraph subTotalQty = new Paragraph("Qty: \u20B9" + String.format(String.valueOf(totalQty)), fontBodyBold);
+                subTotalQty.setAlignment(Element.ALIGN_LEFT);
+                document.add(subTotalQty);
             }
 
             if (gstApplied) {

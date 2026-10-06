@@ -4,7 +4,9 @@ import com.pahal.billingApp.dto.AddBillPaymentRequest;
 import com.pahal.billingApp.dto.BillRegisterResponse;
 import com.pahal.billingApp.dto.BillRegisterSummaryResponse;
 import com.pahal.billingApp.dto.BillResponse;
+import com.pahal.billingApp.dto.CancelBillRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
+import com.pahal.billingApp.dto.ReturnBillRequest;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.service.BillingService;
@@ -23,7 +25,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/bills")
@@ -123,6 +128,22 @@ public class BillController {
         return ResponseEntity.ok(BillResponseMapper.toResponse(updated));
     }
 
+    @Operation(summary = "Cancel Bill", description = "Cancels a bill, restores stock, and reverses payment impact.")
+    @PatchMapping("/{id}/cancel")
+    public ResponseEntity<BillResponse> cancelBill(@PathVariable Long id,
+            @RequestBody(required = false) CancelBillRequest request) {
+        Bill updated = billingService.cancelBill(id, request);
+        return ResponseEntity.ok(BillResponseMapper.toResponse(updated));
+    }
+
+    @Operation(summary = "Return Bill Items", description = "Records partial item returns, restores stock, and adjusts totals/payments.")
+    @PatchMapping("/{id}/returns")
+    public ResponseEntity<BillResponse> returnBillItems(@PathVariable Long id,
+            @RequestBody ReturnBillRequest request) {
+        Bill updated = billingService.returnBillItems(id, request);
+        return ResponseEntity.ok(BillResponseMapper.toResponse(updated));
+    }
+
     /**
      * 4. Generate and Download PDF for a Bill
      */
@@ -169,6 +190,11 @@ class BillResponseMapper {
         r.setTenantId(bill.getTenantId());
         r.setPaidAmount(bill.getPaidAmount());
         r.setDueAmount(bill.getDueAmount());
+        r.setStatus(bill.getStatus());
+        r.setCancelReason(bill.getCancelReason());
+        r.setCancelledAt(bill.getCancelledAt());
+        r.setReturnReason(bill.getReturnReason());
+        r.setLastReturnedAt(bill.getLastReturnedAt());
 
         if (bill.getSalesMan() != null) {
             r.setSalesmanEmployeeId(bill.getSalesMan().getEmployeeId());
@@ -177,12 +203,14 @@ class BillResponseMapper {
 
         if (bill.getItems() != null) {
             r.setItems(
-                    bill.getItems().stream().map(i -> {
+                    distinctItems(bill.getItems()).stream().map(i -> {
                         BillResponse.Item it = new BillResponse.Item();
                         it.setProductId(i.getProductId());
                         it.setBarcode(i.getBarcode());
                         it.setProductName(i.getProductName());
                         it.setQuantity(i.getQuantity());
+                        it.setReturnedQuantity(i.getReturnedQuantity());
+                        it.setNetQuantity(i.getNetQuantity());
                         it.setUnitSellingPrice(i.getUnitSellingPrice());
                         it.setDiscount(i.getDiscount());
                         it.setHsnCode(i.getHsnCode());
@@ -207,5 +235,21 @@ class BillResponseMapper {
         }
 
         return r;
+    }
+
+    private static List<com.pahal.billingApp.entity.BillItem> distinctItems(List<com.pahal.billingApp.entity.BillItem> items) {
+        Map<Long, com.pahal.billingApp.entity.BillItem> byId = new LinkedHashMap<>();
+        List<com.pahal.billingApp.entity.BillItem> withoutId = new ArrayList<>();
+        for (com.pahal.billingApp.entity.BillItem item : items) {
+            if (item == null) continue;
+            if (item.getId() == null) {
+                withoutId.add(item);
+            } else {
+                byId.putIfAbsent(item.getId(), item);
+            }
+        }
+        List<com.pahal.billingApp.entity.BillItem> distinct = new ArrayList<>(byId.values());
+        distinct.addAll(withoutId);
+        return distinct;
     }
 }

@@ -6,6 +6,9 @@ import com.pahal.billingApp.dto.AddBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillItemRequest;
 import com.pahal.billingApp.dto.CreateBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
+import com.pahal.billingApp.dto.CancelBillRequest;
+import com.pahal.billingApp.dto.ReturnBillItemRequest;
+import com.pahal.billingApp.dto.ReturnBillRequest;
 import com.pahal.billingApp.entity.Customer;
 import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.ProductBarcode;
@@ -32,6 +35,7 @@ import java.util.LinkedHashSet;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -384,6 +388,267 @@ class BillControllerIT {
     }
 
     @Test
+    void returnBillItems_restoresStock_recalculatesTotal_andRecordsRefundAdjustment() throws Exception {
+        final String returnTenant = "Tenant-Return";
+        long productId;
+
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            Product product = new Product();
+            product.setBarcode("RET-1");
+            product.setName("Return Soap");
+            product.setSellingPrice(100.0);
+            product.setPrice(100.0);
+            product.setGstRate(0.18);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(10.0);
+            productId = productRepository.save(product).getId();
+
+            Salesman salesman = new Salesman();
+            salesman.setEmployeeId("RET-SM");
+            salesman.setName("Return Cashier");
+            salesManRepository.save(salesman);
+        } finally {
+            TenantContext.clear();
+        }
+
+        CreateBillItemRequest item = new CreateBillItemRequest();
+        item.setProductId(productId);
+        item.setQuantity(2.0);
+        item.setDiscount(0.0);
+        item.setUnitSellingPrice(100.0);
+
+        CreateBillPaymentRequest cash = new CreateBillPaymentRequest();
+        cash.setMethod(com.pahal.billingApp.enums.PaymentMethod.CASH);
+        cash.setAmount(236.0);
+
+        CreateBillRequest create = new CreateBillRequest();
+        create.setCustomerName("Return Customer");
+        create.setContactInfo("7000011111");
+        create.setSalesmanEmployeeId("RET-SM");
+        create.setItems(List.of(item));
+        create.setPayments(List.of(cash));
+
+        long billId;
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            String responseJson = mockMvc.perform(
+                            post("/api/bills")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(create)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalAmount").value(236.0))
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
+            billId = objectMapper.readTree(responseJson).get("id").asLong();
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(8.0);
+        } finally {
+            TenantContext.clear();
+        }
+
+        ReturnBillItemRequest returnItem = new ReturnBillItemRequest();
+        returnItem.setProductId(productId);
+        returnItem.setQuantity(1.0);
+        ReturnBillRequest returnRequest = new ReturnBillRequest();
+        returnRequest.setReason("Customer returned one item");
+        returnRequest.setItems(List.of(returnItem));
+
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            mockMvc.perform(
+                            patch("/api/bills/{id}/returns", billId)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(returnRequest)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("PARTIALLY_RETURNED"))
+                    .andExpect(jsonPath("$.totalAmount").value(118.0))
+                    .andExpect(jsonPath("$.paidAmount").value(118.0))
+                    .andExpect(jsonPath("$.dueAmount").value(0.0))
+                    .andExpect(jsonPath("$.items[0].returnedQuantity").value(1.0))
+                    .andExpect(jsonPath("$.items[0].netQuantity").value(1.0))
+                    .andExpect(jsonPath("$.payments[?(@.method=='CASH' && @.amount==-118.0)]").exists());
+
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(9.0);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void returnBillItems_clearsDueBeforeRefundWhenCustomerPaidOnlyKeptItems() throws Exception {
+        final String returnTenant = "Tenant-Return-Due";
+        long productId;
+
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            Product product = new Product();
+            product.setBarcode("RET-DUE-1");
+            product.setName("Return Due Soap");
+            product.setSellingPrice(100.0);
+            product.setPrice(100.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(20.0);
+            productId = productRepository.save(product).getId();
+
+            Salesman salesman = new Salesman();
+            salesman.setEmployeeId("RET-DUE-SM");
+            salesman.setName("Return Due Cashier");
+            salesManRepository.save(salesman);
+        } finally {
+            TenantContext.clear();
+        }
+
+        CreateBillItemRequest item = new CreateBillItemRequest();
+        item.setProductId(productId);
+        item.setQuantity(10.0);
+        item.setDiscount(0.0);
+        item.setUnitSellingPrice(100.0);
+
+        CreateBillPaymentRequest cash = new CreateBillPaymentRequest();
+        cash.setMethod(com.pahal.billingApp.enums.PaymentMethod.CASH);
+        cash.setAmount(300.0);
+
+        CreateBillRequest create = new CreateBillRequest();
+        create.setCustomerName("Return Due Customer");
+        create.setContactInfo("7000033333");
+        create.setSalesmanEmployeeId("RET-DUE-SM");
+        create.setItems(List.of(item));
+        create.setPayments(List.of(cash));
+
+        long billId;
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            String responseJson = mockMvc.perform(
+                            post("/api/bills")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(create)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalAmount").value(1000.0))
+                    .andExpect(jsonPath("$.paidAmount").value(300.0))
+                    .andExpect(jsonPath("$.dueAmount").value(700.0))
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
+            billId = objectMapper.readTree(responseJson).get("id").asLong();
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(10.0);
+        } finally {
+            TenantContext.clear();
+        }
+
+        ReturnBillItemRequest returnItem = new ReturnBillItemRequest();
+        returnItem.setProductId(productId);
+        returnItem.setQuantity(7.0);
+        ReturnBillRequest returnRequest = new ReturnBillRequest();
+        returnRequest.setReason("Customer kept three items");
+        returnRequest.setItems(List.of(returnItem));
+
+        TenantContext.setCurrentTenant(returnTenant);
+        try {
+            mockMvc.perform(
+                            patch("/api/bills/{id}/returns", billId)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(returnRequest)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("PARTIALLY_RETURNED"))
+                    .andExpect(jsonPath("$.totalAmount").value(300.0))
+                    .andExpect(jsonPath("$.paidAmount").value(300.0))
+                    .andExpect(jsonPath("$.dueAmount").value(0.0))
+                    .andExpect(jsonPath("$.items[0].returnedQuantity").value(7.0))
+                    .andExpect(jsonPath("$.items[0].netQuantity").value(3.0))
+                    .andExpect(jsonPath("$.payments[?(@.method=='CREDIT' && @.amount==-700.0)]").exists())
+                    .andExpect(jsonPath("$.payments[?(@.method=='CASH' && @.amount < 0)]").doesNotExist());
+
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(17.0);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
+    void cancelBill_restoresAllRemainingStockAndReversesPayments() throws Exception {
+        final String cancelTenant = "Tenant-Cancel";
+        long productId;
+
+        TenantContext.setCurrentTenant(cancelTenant);
+        try {
+            Product product = new Product();
+            product.setBarcode("CAN-1");
+            product.setName("Cancel Soap");
+            product.setSellingPrice(50.0);
+            product.setPrice(50.0);
+            product.setItemType(com.pahal.billingApp.enums.ItemType.PACKAGE);
+            product.setStockQuantity(10.0);
+            productId = productRepository.save(product).getId();
+
+            Salesman salesman = new Salesman();
+            salesman.setEmployeeId("CAN-SM");
+            salesman.setName("Cancel Cashier");
+            salesManRepository.save(salesman);
+        } finally {
+            TenantContext.clear();
+        }
+
+        CreateBillItemRequest item = new CreateBillItemRequest();
+        item.setProductId(productId);
+        item.setQuantity(2.0);
+        item.setDiscount(0.0);
+        item.setUnitSellingPrice(50.0);
+
+        CreateBillPaymentRequest cash = new CreateBillPaymentRequest();
+        cash.setMethod(com.pahal.billingApp.enums.PaymentMethod.CASH);
+        cash.setAmount(100.0);
+
+        CreateBillRequest create = new CreateBillRequest();
+        create.setCustomerName("Cancel Customer");
+        create.setContactInfo("7000022222");
+        create.setSalesmanEmployeeId("CAN-SM");
+        create.setItems(List.of(item));
+        create.setPayments(List.of(cash));
+
+        long billId;
+        TenantContext.setCurrentTenant(cancelTenant);
+        try {
+            String responseJson = mockMvc.perform(
+                            post("/api/bills")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(create)))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString();
+            billId = objectMapper.readTree(responseJson).get("id").asLong();
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(8.0);
+        } finally {
+            TenantContext.clear();
+        }
+
+        CancelBillRequest cancel = new CancelBillRequest();
+        cancel.setReason("Wrong bill");
+
+        TenantContext.setCurrentTenant(cancelTenant);
+        try {
+            mockMvc.perform(
+                            patch("/api/bills/{id}/cancel", billId)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(cancel)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("CANCELLED"))
+                    .andExpect(jsonPath("$.cancelReason").value("Wrong bill"))
+                    .andExpect(jsonPath("$.totalAmount").value(0.0))
+                    .andExpect(jsonPath("$.paidAmount").value(0.0))
+                    .andExpect(jsonPath("$.dueAmount").value(0.0))
+                    .andExpect(jsonPath("$.items[0].returnedQuantity").value(2.0))
+                    .andExpect(jsonPath("$.items[0].netQuantity").value(0.0))
+                    .andExpect(jsonPath("$.payments[?(@.method=='CASH' && @.amount==-100.0)]").exists());
+
+            assertThat(productRepository.findById(productId).orElseThrow().getStockQuantity()).isEqualTo(10.0);
+        } finally {
+            TenantContext.clear();
+        }
+    }
+
+    @Test
     void createBill_withInstantDiscount_reducesTotal_andKeepsCreditDueAsUsual() throws Exception {
         final String GROCERY_TENANT = "Tenant-Grocery";
         // Seed product + salesman for this tenant.
@@ -525,7 +790,9 @@ class BillControllerIT {
                     .get()
                     .extracting(Customer::getId)
                     .isEqualTo(customerId);
-            assertThat(customerRepository.findAll()).hasSize(1);
+            assertThat(customerRepository.findAll().stream()
+                    .filter(savedCustomer -> "9000011111".equals(savedCustomer.getContactNumber()))
+                    .count()).isEqualTo(1);
         } finally {
             TenantContext.clear();
         }

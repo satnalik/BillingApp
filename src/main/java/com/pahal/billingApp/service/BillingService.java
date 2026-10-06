@@ -4,9 +4,12 @@ package com.pahal.billingApp.service;
 import com.pahal.billingApp.dto.AddBillPaymentRequest;
 import com.pahal.billingApp.dto.BillRegisterResponse;
 import com.pahal.billingApp.dto.BillRegisterSummaryResponse;
+import com.pahal.billingApp.dto.CancelBillRequest;
 import com.pahal.billingApp.dto.CreateBillItemRequest;
 import com.pahal.billingApp.dto.CreateBillPaymentRequest;
 import com.pahal.billingApp.dto.CreateBillRequest;
+import com.pahal.billingApp.dto.ReturnBillItemRequest;
+import com.pahal.billingApp.dto.ReturnBillRequest;
 import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.entity.BillItem;
@@ -15,6 +18,7 @@ import com.pahal.billingApp.entity.Customer;
 import com.pahal.billingApp.entity.Product;
 import com.pahal.billingApp.entity.ProductBarcode;
 import com.pahal.billingApp.entity.Salesman;
+import com.pahal.billingApp.enums.BillStatus;
 import com.pahal.billingApp.enums.PaymentMethod;
 import com.pahal.billingApp.repository.BillRepository;
 import com.pahal.billingApp.repository.BillPaymentRepository;
@@ -50,6 +54,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Comparator;
 import java.util.stream.Collectors;
 
 @Service
@@ -498,6 +503,10 @@ public class BillingService {
         Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
                 .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
 
+        if (getEffectiveStatus(bill) == BillStatus.CANCELLED) {
+            throw new RuntimeException("Cannot add payment to a cancelled bill");
+        }
+
         double currentDue = bill.getDueAmount() != null ? bill.getDueAmount() : 0.0;
         double amount = request.getAmount();
 
@@ -525,6 +534,212 @@ public class BillingService {
 
         recomputePaidAndDue(bill);
         return billRepository.save(bill);
+    }
+
+    @Transactional
+    @CacheEvict(cacheNames = "reports", allEntries = true)
+    public Bill cancelBill(Long billId, CancelBillRequest request) {
+        if (billId == null) throw new RuntimeException("Bill id is required");
+
+        Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
+                .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
+
+        if (getEffectiveStatus(bill) == BillStatus.CANCELLED) {
+            throw new RuntimeException("Bill is already cancelled");
+        }
+
+        if (bill.getItems() != null) {
+            for (BillItem item : distinctBillItems(bill)) {
+                double netQuantity = netQuantity(item);
+                if (netQuantity <= 0.0001) continue;
+                Product product = findProduct(item.getProductId());
+                product.setStockQuantity(round2(nonNull(product.getStockQuantity()) + netQuantity));
+                item.setReturnedQuantity(round2(nonNull(item.getReturnedQuantity()) + netQuantity));
+            }
+        }
+
+        bill.setSubTotalAmount(0.0);
+        bill.setGstApplied(false);
+        bill.setGstAmount(0.0);
+        bill.setInstantDiscountAmount(0.0);
+        bill.setTotalAmount(0.0);
+        adjustPaymentsToTotal(bill, 0.0, "Bill cancelled");
+        bill.setStatus(BillStatus.CANCELLED);
+        bill.setCancelReason(request != null ? request.getReason() : null);
+        bill.setCancelledAt(LocalDateTime.now());
+        return billRepository.save(bill);
+    }
+
+    @Transactional
+    @CacheEvict(cacheNames = "reports", allEntries = true)
+    public Bill returnBillItems(Long billId, ReturnBillRequest request) {
+        if (billId == null) throw new RuntimeException("Bill id is required");
+        if (request == null) throw new RuntimeException("Request is required");
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new RuntimeException("At least one return item is required");
+        }
+
+        Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
+                .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
+
+        if (getEffectiveStatus(bill) == BillStatus.CANCELLED) {
+            throw new RuntimeException("Cannot return items from a cancelled bill");
+        }
+
+        for (ReturnBillItemRequest returnItem : request.getItems()) {
+            if (returnItem == null || returnItem.getQuantity() == null || returnItem.getQuantity() <= 0.0) {
+                throw new RuntimeException("Return quantity must be > 0");
+            }
+            BillItem billItem = resolveReturnItem(bill, returnItem);
+            double quantity = round2(returnItem.getQuantity());
+            if (quantity - netQuantity(billItem) > 0.0001) {
+                throw new RuntimeException("Return quantity exceeds sold quantity for: " + billItem.getProductName());
+            }
+            Product product = findProduct(billItem.getProductId());
+            product.setStockQuantity(round2(nonNull(product.getStockQuantity()) + quantity));
+            billItem.setReturnedQuantity(round2(nonNull(billItem.getReturnedQuantity()) + quantity));
+        }
+
+        recalculateBillTotalsFromNetItems(bill);
+        adjustPaymentsToTotal(bill, nonNull(bill.getTotalAmount()), "Bill return");
+        bill.setReturnReason(request.getReason());
+        bill.setLastReturnedAt(LocalDateTime.now());
+        bill.setStatus(allItemsReturned(bill) ? BillStatus.CANCELLED : BillStatus.PARTIALLY_RETURNED);
+        if (bill.getStatus() == BillStatus.CANCELLED) {
+            bill.setCancelReason(request.getReason());
+            bill.setCancelledAt(LocalDateTime.now());
+        }
+        return billRepository.save(bill);
+    }
+
+    private BillItem resolveReturnItem(Bill bill, ReturnBillItemRequest request) {
+        if (bill.getItems() == null) throw new RuntimeException("Bill has no items");
+        return distinctBillItems(bill).stream()
+                .filter(item -> matchesReturnItem(item, request))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("Return item does not belong to bill"));
+    }
+
+    private boolean matchesReturnItem(BillItem item, ReturnBillItemRequest request) {
+        if (request.getBillItemId() != null) return request.getBillItemId().equals(item.getId());
+        if (request.getProductId() != null) return request.getProductId().equals(item.getProductId());
+        String barcode = blankToNull(request.getBarcode());
+        return barcode != null && barcode.equals(item.getBarcode());
+    }
+
+    private void recalculateBillTotalsFromNetItems(Bill bill) {
+        double taxableTotal = 0.0;
+        double gstTotal = 0.0;
+        if (bill.getItems() != null) {
+            for (BillItem item : distinctBillItems(bill)) {
+                double originalQuantity = nonNull(item.getQuantity());
+                double netQuantity = netQuantity(item);
+                double ratio = originalQuantity > 0.0001 ? netQuantity / originalQuantity : 0.0;
+                taxableTotal += round2(nonNull(item.getTaxableAmount()) * ratio);
+                gstTotal += round2(nonNull(item.getGstAmount()) * ratio);
+            }
+        }
+        double subTotal = round2(taxableTotal);
+        double gstAmount = round2(gstTotal);
+        double totalBeforeInstantDiscount = round2(subTotal + gstAmount);
+        double instantDiscount = Math.min(nonNull(bill.getInstantDiscountAmount()), totalBeforeInstantDiscount);
+
+        bill.setSubTotalAmount(subTotal);
+        bill.setGstAmount(gstAmount);
+        bill.setGstApplied(gstAmount > 0.0001);
+        bill.setInstantDiscountAmount(round2(instantDiscount));
+        bill.setTotalAmount(round2(totalBeforeInstantDiscount - instantDiscount));
+    }
+
+    private void adjustPaymentsToTotal(Bill bill, double newTotal, String referencePrefix) {
+        ensurePayments(bill);
+
+        double storedPaid = nonNull(bill.getPaidAmount());
+        double paymentPaid = sumPaymentsByCreditFlag(bill, false);
+        double paymentDue = sumPaymentsByCreditFlag(bill, true);
+        double effectivePaid = Math.abs(paymentPaid) > 0.0001 ? paymentPaid : storedPaid;
+
+        double desiredDue = round2(Math.max(0.0, newTotal - effectivePaid));
+        double creditAdjustmentAmount = round2(desiredDue - paymentDue);
+        if (Math.abs(creditAdjustmentAmount) > 0.0001) {
+            BillPayment creditAdjustment = payment(bill, PaymentMethod.CREDIT, creditAdjustmentAmount, referencePrefix + " credit adjustment");
+            bill.getPayments().add(creditAdjustment);
+        }
+
+        double excessTotal = round2(effectivePaid - newTotal);
+        if (excessTotal > 0.0001) {
+            for (BillPayment original : bill.getPayments().stream()
+                    .filter(p -> p.getMethod() != null && p.getMethod() != PaymentMethod.CREDIT)
+                    .filter(p -> nonNull(p.getAmount()) > 0.0001)
+                    .sorted(Comparator.comparing(BillPayment::getId, Comparator.nullsLast(Long::compareTo)).reversed())
+                    .toList()) {
+                double amount = Math.min(nonNull(original.getAmount()), excessTotal);
+                if (amount <= 0.0001) continue;
+                BillPayment refund = payment(bill, original.getMethod(), -amount, referencePrefix + " refund adjustment");
+                bill.getPayments().add(refund);
+                excessTotal = round2(excessTotal - amount);
+                if (excessTotal <= 0.0001) break;
+            }
+        }
+
+        recomputePaidAndDue(bill);
+    }
+
+    private double sumPaymentsByCreditFlag(Bill bill, boolean credit) {
+        if (bill.getPayments() == null) {
+            return 0.0;
+        }
+        return round2(bill.getPayments().stream()
+                .filter(p -> p != null && p.getMethod() != null)
+                .filter(p -> credit == (p.getMethod() == PaymentMethod.CREDIT))
+                .mapToDouble(p -> nonNull(p.getAmount()))
+                .sum());
+    }
+
+    private BillPayment payment(Bill bill, PaymentMethod method, double amount, String reference) {
+        BillPayment payment = new BillPayment();
+        payment.setBill(bill);
+        payment.setMethod(method);
+        payment.setAmount(round2(amount));
+        payment.setReference(reference);
+        return payment;
+    }
+
+    private void ensurePayments(Bill bill) {
+        if (bill.getPayments() == null) {
+            bill.setPayments(new LinkedHashSet<>());
+        }
+    }
+
+    public BillStatus getEffectiveStatus(Bill bill) {
+        return bill != null && bill.getStatus() != null ? bill.getStatus() : BillStatus.ACTIVE;
+    }
+
+    private boolean allItemsReturned(Bill bill) {
+        return bill.getItems() != null && distinctBillItems(bill).stream().allMatch(item -> netQuantity(item) <= 0.0001);
+    }
+
+    private double netQuantity(BillItem item) {
+        return round2(nonNull(item.getQuantity()) - nonNull(item.getReturnedQuantity()));
+    }
+
+    private List<BillItem> distinctBillItems(Bill bill) {
+        if (bill == null || bill.getItems() == null) {
+            return List.of();
+        }
+        Map<Long, BillItem> byId = new LinkedHashMap<>();
+        List<BillItem> withoutId = new ArrayList<>();
+        for (BillItem item : bill.getItems()) {
+            if (item == null) continue;
+            if (item.getId() == null) {
+                withoutId.add(item);
+            } else {
+                byId.putIfAbsent(item.getId(), item);
+            }
+        }
+        List<BillItem> items = new ArrayList<>(byId.values());
+        items.addAll(withoutId);
+        return items;
     }
 
     private void hydratePayments(Collection<Bill> bills) {

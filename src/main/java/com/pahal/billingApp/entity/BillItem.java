@@ -32,6 +32,7 @@ public class BillItem {
     private String barcode;
     private String productName;
     private Double quantity;
+    private Double returnedQuantity = 0.0;
 
     /**
      * Editable selling price per unit at billing time (can differ from product
@@ -45,6 +46,12 @@ public class BillItem {
     private Double gstRate;
     private Double taxableAmount;
     private Double gstAmount;
+
+    public Double getNetQuantity() {
+        double sold = quantity != null ? quantity : 0.0;
+        double returned = returnedQuantity != null ? returnedQuantity : 0.0;
+        return Math.round((sold - returned) * 100.0) / 100.0;
+    }
 
     // We don't necessarily need a tenant_id here because
     // it is "owned" by the Bill, which already has a tenant_id.
