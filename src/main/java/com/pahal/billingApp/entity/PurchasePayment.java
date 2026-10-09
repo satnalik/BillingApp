@@ -22,7 +22,8 @@ import lombok.ToString;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "purchase_payments")
+@Table(name = "purchase_payments", uniqueConstraints = @jakarta.persistence.UniqueConstraint(
+        name = "uk_purchase_payment_request", columnNames = {"purchase_bill_id", "request_key"}))
 @Getter
 @Setter
 @ToString(exclude = "purchaseBill")
@@ -47,6 +48,15 @@ public class PurchasePayment {
     private Double amount;
 
     private String reference;
+    private Boolean refund = false;
+    @Column(length = 36)
+    @JsonIgnore
+    private String requestKey;
+    @Column(length = 64)
+    @JsonIgnore
+    private String fingerprint;
+    @Column(length = 160)
+    private String actorName;
     private LocalDateTime createdAt;
 
     @PrePersist

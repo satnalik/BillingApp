@@ -6,6 +6,13 @@ import com.pahal.billingApp.dto.ProductSalesReportResponse;
 import com.pahal.billingApp.dto.SalesReportDTO;
 import com.pahal.billingApp.dto.SalesReportResponse;
 import com.pahal.billingApp.service.ReportService;
+import com.pahal.billingApp.service.OperationalReportService;
+import com.pahal.billingApp.service.InventoryService;
+import com.pahal.billingApp.service.SalesProfitReportService;
+import com.pahal.billingApp.dto.SalesProfitReportDTO;
+import com.pahal.billingApp.dto.OperationalReportDTO;
+import com.pahal.billingApp.enums.StockMovementType;
+import org.springframework.format.annotation.DateTimeFormat;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,12 +29,52 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/reports")
-@Tag(name = "Report API", description = "Endpoints for generating sales and day-end reports")
+@Tag(name = "Report API", description = "Sales, customer outstanding, inventory and collections reports")
 public class ReportController {
     private final ReportService reportService;
+    private final OperationalReportService operationalReports;
+    private final InventoryService inventory;
+    private final SalesProfitReportService profitReports;
 
-    public ReportController(ReportService reportService) {
+    public ReportController(ReportService reportService, OperationalReportService operationalReports, InventoryService inventory,
+            SalesProfitReportService profitReports) {
         this.reportService = reportService;
+        this.operationalReports = operationalReports;
+        this.inventory = inventory;
+        this.profitReports = profitReports;
+    }
+
+    @Operation(summary = "Estimated sales gross profit", description = "Uses unit cost captured at sale, excludes recorded GST, and allocates final bill discounts before product filtering. Missing historical costs are excluded from profit. Returns restate the original invoice date; this is not net business profit or FIFO costing.")
+    @GetMapping("/sales-profit")
+    public SalesProfitReportDTO.Report salesProfit(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(required = false) String productName,
+            @RequestParam(required = false) String barcode,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String view) {
+        return profitReports.report(from, to, productName, barcode, category, view);
+    }
+
+    @Operation(summary = "Current customer outstanding balances", description = "Groups current unpaid invoices by contact, with bill-age buckets. Bills without a usable contact remain separate.")
+    @GetMapping("/customer-outstanding")
+    public OperationalReportDTO.OutstandingReport outstanding() {
+        return operationalReports.outstanding();
+    }
+
+    @Operation(summary = "Current stock and estimated value", description = "Values stock at current product cost. Missing costs are unvalued; this is not historical or FIFO valuation.")
+    @GetMapping("/inventory-stock")
+    public OperationalReportDTO.StockReport stock() {
+        return operationalReports.stock();
+    }
+
+    @Operation(summary = "Stock movement report", description = "Returns all matching movement snapshots using the inventory history filters, for viewing and complete exports.")
+    @GetMapping("/stock-movements")
+    public OperationalReportDTO.MovementReport movements(@RequestParam(required = false) Long productId,
+            @RequestParam(required = false) StockMovementType type,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return inventory.reportMovements(productId, type, from, to);
     }
 
     @Operation(summary = "Daily Sales Report", description = "Generates a sales report for a specific day. The report includes total sales, number of bills, and payment mode breakdown.")
@@ -54,7 +101,7 @@ public class ReportController {
         return ResponseEntity.ok(reportService.buildRangeReport(fromDate, toDate));
     }
 
-    @Operation(summary = "Product Wise Sales And Revenue", description = "Returns product-level quantity, revenue, discount, GST, and current stock for a date range.")
+    @Operation(summary = "Product Wise Sales And Revenue", description = "Returns quantities after returns, item revenue before final bill-level discount, item discounts, GST and current stock. Sales dates refer to the original invoice.")
     @GetMapping("/product-sales")
     public ResponseEntity<ProductSalesReportResponse> productSales(
             @RequestParam("from") String from,

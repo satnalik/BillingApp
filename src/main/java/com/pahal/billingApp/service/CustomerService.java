@@ -14,6 +14,16 @@ public class CustomerService {
     @Autowired
     private CustomerRepository customerRepository;
 
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void ensureBillCustomer(String name, String contactInfo) {
+        String tenant = StockService.requireTenant();
+        if (contactInfo == null || contactInfo.isBlank()) return;
+        String contact = contactInfo.trim();
+        if (contact.length() > 32) throw new IllegalArgumentException("Customer contact must be at most 32 characters.");
+        String displayName = name == null || name.isBlank() ? null : name.trim();
+        customerRepository.ensureBillCustomer(tenant, contact, displayName, java.time.LocalDateTime.now());
+    }
+
     @Transactional(readOnly = true)
     public List<Customer> getCustomers(String q) {
         if (q == null || q.isBlank()) {

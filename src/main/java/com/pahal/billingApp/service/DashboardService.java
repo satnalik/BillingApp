@@ -16,6 +16,8 @@ import java.time.LocalDateTime;
 
 @Service
 public class DashboardService {
+    @org.springframework.beans.factory.annotation.Autowired private com.pahal.billingApp.licensing.ModuleAccessService moduleAccess;
+    @org.springframework.beans.factory.annotation.Autowired private com.pahal.billingApp.licensing.TenantLicenseService tenantLicenses;
 
     private final BillRepository billRepository;
     private final ProductRepository productRepository;
@@ -44,8 +46,8 @@ public class DashboardService {
         response.setTodaySales(round2(nonNull(billRepository.sumTotalAmountBetween(start, end))));
         response.setBillCount(billRepository.countByCreatedAtBetween(start, end));
         response.setCustomerDue(round2(nonNull(billRepository.sumOutstandingDueAmount())));
-        response.setSupplierDue(
-                round2(nonNull(purchaseBillRepository.sumActiveSupplierDueAmount(PurchaseStatus.CANCELLED))));
+        if (moduleAccess.manager() && tenantLicenses.everLicensed(moduleAccess.tenant(), com.pahal.billingApp.licensing.Feature.PURCHASES))
+            response.setSupplierDue(round2(nonNull(purchaseBillRepository.sumActiveSupplierDueAmount(PurchaseStatus.CANCELLED))));
         response.setLowStockThreshold(threshold);
         response.setLowStockCount(productRepository.countByStockQuantityLessThanEqual(threshold));
 

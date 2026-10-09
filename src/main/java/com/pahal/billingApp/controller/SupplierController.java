@@ -3,6 +3,9 @@ package com.pahal.billingApp.controller;
 import com.pahal.billingApp.entity.Supplier;
 import com.pahal.billingApp.security.CustomUserDetails;
 import com.pahal.billingApp.service.SupplierService;
+import com.pahal.billingApp.service.SupplierStatementService;
+import com.pahal.billingApp.dto.SupplierStatementDTO;
+import java.time.LocalDate;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +31,16 @@ public class SupplierController {
 
     @Autowired
     private SupplierService supplierService;
+
+    @Autowired
+    private SupplierStatementService statements;
+
+    @Operation(summary = "Supplier statement", description = "Date-filtered purchases, payments, returns, refunds and cancellations with running balance.")
+    @GetMapping("/{id}/statement")
+    public SupplierStatementDTO statement(@PathVariable Long id,
+            @RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to) {
+        return statements.statement(id, from, to);
+    }
 
     @Operation(summary = "Create Supplier", description = "Creates a supplier for the current tenant.")
     @PostMapping

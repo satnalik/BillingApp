@@ -15,6 +15,7 @@ public class SalesManService {
     @Autowired
     private SalesManRepository salesManRepository;
 
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PRODUCTS)
     public String addNewSalesMan(Salesman salesman){
         salesManRepository.save(salesman);
         return salesman.getEmployeeId();
@@ -25,6 +26,7 @@ public class SalesManService {
     }
 
     @CacheEvict(cacheNames = "reports", allEntries = true)
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PRODUCTS)
     public Salesman setActiveStatus(String employeeId, String tenantId, boolean active) {
         Salesman salesman = salesManRepository.findByEmployeeIdAndTenantId(employeeId, tenantId)
                 .orElseThrow(() -> new RuntimeException("Salesman not found"));

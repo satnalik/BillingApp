@@ -58,7 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // IMPORTANT: Your CustomUserDetailsService must now load by userId
                 UserDetails userDetails = this.userDetailsService.loadUserByUsername(userId);
 
-                if (isTokenValid(jwt, userDetails)) {
+                if (userDetails.isEnabled() && isTokenValid(jwt, userDetails)) {
                     // We use userDetails.getAuthorities() - Make sure your UserDetails
                     // implementation converts your Role enum to SimpleGrantedAuthority("ROLE_" + role)
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(

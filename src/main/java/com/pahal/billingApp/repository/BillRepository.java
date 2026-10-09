@@ -18,6 +18,48 @@ import java.util.List;
 import java.util.Optional;
 
 public interface BillRepository extends JpaRepository<Bill,Long> {
+    Optional<Bill> findByTenantIdAndTaxDocumentNumber(String tenantId, String number);
+    @Query("select b.id as id, b.createdAt as createdAt from Bill b where b.tenantId = :tenant and b.createdAt >= :from and b.createdAt < :to and b.taxDocumentNumber is null")
+    List<com.pahal.billingApp.dto.GstDTO.LegacySale> findLegacyGst(@Param("tenant") String tenant,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+    // Read every item of each invoice: allocate its final discount BEFORE product filters.
+    @Query("""
+            select b.id as billId, b.createdAt as createdAt, b.instantDiscountAmount as billDiscount,
+                   i.finalDiscountAmount as finalDiscountAmount,
+                   i.id as itemId, i.productId as productId, i.productName as productName,
+                   i.barcode as barcode, p.category as category, i.quantity as quantity,
+                   i.returnedQuantity as returnedQuantity, i.taxableAmount as taxableAmount,
+                   i.gstAmount as gstAmount, i.cgstAmount as cgstAmount, i.sgstAmount as sgstAmount,
+                   i.igstAmount as igstAmount, coalesce(i.unitSellingPrice, i.priceAtSale) as unitSellingPrice,
+                   i.discount as discount, i.unitCostAtSale as unitCostAtSale
+            from Bill b join b.items i
+            left join Product p on p.id = i.productId and p.tenantId = b.tenantId
+            where b.tenantId = :tenantId and b.createdAt >= :start and b.createdAt < :end
+              and (b.status is null or b.status <> com.pahal.billingApp.enums.BillStatus.CANCELLED)
+            order by b.id, i.id
+            """)
+    List<com.pahal.billingApp.dto.SalesProfitReportDTO.SaleRow> findProfitRows(
+            @Param("tenantId") String tenantId, @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
+    @EntityGraph(attributePaths = {"items", "salesMan"})
+    @Query("select b from Bill b where b.tenantId = :tenantId and b.creationRequestKey = :key")
+    Optional<Bill> findSubmission(@Param("tenantId") String tenantId, @Param("key") String key);
+
+    @Query("""
+            select b.id as id, b.customerName as customerName, b.contactInfo as contactInfo,
+                   b.createdAt as createdAt, b.totalAmount as totalAmount,
+                   b.paidAmount as paidAmount, b.dueAmount as dueAmount
+            from Bill b where b.tenantId = :tenantId and b.dueAmount > 0
+              and (b.status is null or b.status <> com.pahal.billingApp.enums.BillStatus.CANCELLED)
+            order by b.createdAt desc, b.id desc
+            """)
+    List<com.pahal.billingApp.dto.OperationalReportDTO.OutstandingBillRow> findOutstandingReportRows(
+            @Param("tenantId") String tenantId);
+
+    @Query("select distinct i.productId from Bill b join b.items i where b.tenantId = :tenantId and i.productId in :ids")
+    List<Long> findProductsWithStockActivity(@Param("tenantId") String tenantId, @Param("ids") java.util.Collection<Long> ids);
+
     List<Bill> findByCreatedAtBetween(LocalDateTime startInclusive, LocalDateTime endExclusive);
 
     @Query("""
@@ -78,6 +120,7 @@ public interface BillRepository extends JpaRepository<Bill,Long> {
     List<ReportAggProjection> findSalesmanBreakdown(@Param("start") LocalDateTime startInclusive,
                                                     @Param("end") LocalDateTime endExclusive);
 
+    // Explicit String casts keep optional null filters typed as text in PostgreSQL.
     @Query("""
             select i.productId as productId,
                    i.productName as productName,
@@ -95,13 +138,14 @@ public interface BillRepository extends JpaRepository<Bill,Long> {
             from Bill b
             join b.items i
             left join Product p on p.id = i.productId and p.tenantId = b.tenantId
+            left join b.salesMan sm
             where b.createdAt >= :start and b.createdAt < :end
-              and (:tenantId is null or b.tenantId = :tenantId)
+              and b.tenantId = :tenantId
               and (b.status is null or b.status <> com.pahal.billingApp.enums.BillStatus.CANCELLED)
-              and (:productName is null or lower(i.productName) like lower(concat('%', :productName, '%')))
-              and (:barcode is null or lower(coalesce(i.barcode, p.barcode, '')) like lower(concat('%', :barcode, '%')))
-              and (:category is null or lower(coalesce(p.category, '')) = lower(:category))
-              and (:salesmanId is null or b.salesMan.employeeId = :salesmanId)
+              and (cast(:productName as String) is null or lower(i.productName) like lower(concat('%', cast(:productName as String), '%')))
+              and (cast(:barcode as String) is null or lower(coalesce(i.barcode, p.barcode, '')) like lower(concat('%', cast(:barcode as String), '%')))
+              and (cast(:category as String) is null or lower(coalesce(p.category, '')) = lower(cast(:category as String)))
+              and (cast(:salesmanId as String) is null or sm.employeeId = cast(:salesmanId as String))
               and i.productName is not null
               and trim(i.productName) <> ''
               and (coalesce(i.quantity, 0) - coalesce(i.returnedQuantity, 0)) > 0
@@ -122,13 +166,14 @@ public interface BillRepository extends JpaRepository<Bill,Long> {
             from Bill b
             join b.items i
             left join Product p on p.id = i.productId and p.tenantId = b.tenantId
+            left join b.salesMan sm
             where b.createdAt >= :start and b.createdAt < :end
-              and (:tenantId is null or b.tenantId = :tenantId)
+              and b.tenantId = :tenantId
               and (b.status is null or b.status <> com.pahal.billingApp.enums.BillStatus.CANCELLED)
-              and (:productName is null or lower(i.productName) like lower(concat('%', :productName, '%')))
-              and (:barcode is null or lower(coalesce(i.barcode, p.barcode, '')) like lower(concat('%', :barcode, '%')))
-              and (:category is null or lower(coalesce(p.category, '')) = lower(:category))
-              and (:salesmanId is null or b.salesMan.employeeId = :salesmanId)
+              and (cast(:productName as String) is null or lower(i.productName) like lower(concat('%', cast(:productName as String), '%')))
+              and (cast(:barcode as String) is null or lower(coalesce(i.barcode, p.barcode, '')) like lower(concat('%', cast(:barcode as String), '%')))
+              and (cast(:category as String) is null or lower(coalesce(p.category, '')) = lower(cast(:category as String)))
+              and (cast(:salesmanId as String) is null or sm.employeeId = cast(:salesmanId as String))
               and i.productName is not null
               and trim(i.productName) <> ''
               and (coalesce(i.quantity, 0) - coalesce(i.returnedQuantity, 0)) > 0

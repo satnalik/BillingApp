@@ -15,6 +15,9 @@ public class CreatePurchaseBillRequest {
     private LocalDate billDate;
     private Double discountAmount;
     private Double taxAmount;
+    private String supplierStateCode;
+    private String placeOfSupply;
+    private String priceMode;
     private Double paidAmount;
     private PaymentMethod paymentMethod;
     private String paymentReference;

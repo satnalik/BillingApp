@@ -22,6 +22,10 @@ public class CustomUserDetails implements UserDetails {
         return user.getTenantId();
     }
 
+    public String getDisplayName() {
+        return user.getName() == null || user.getName().isBlank() ? user.getUserId() : user.getName();
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         // For now, we give everyone a default "USER" role
@@ -42,5 +46,5 @@ public class CustomUserDetails implements UserDetails {
     @Override public boolean isAccountNonExpired() { return true; }
     @Override public boolean isAccountNonLocked() { return true; }
     @Override public boolean isCredentialsNonExpired() { return true; }
-    @Override public boolean isEnabled() { return true; }
+    @Override public boolean isEnabled() { return user.isActive(); }
 }

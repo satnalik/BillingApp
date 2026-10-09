@@ -11,6 +11,15 @@ import java.util.Optional;
 
 @Repository
 public interface ProductRepository extends JpaRepository<Product, Long> {
+    @Query("""
+            select p.id as productId, p.name as productName, p.barcode as barcode,
+                   p.category as category, p.supplierName as supplierName,
+                   p.stockQuantity as stockQuantity, p.costPrice as costPrice
+            from Product p where p.tenantId = :tenantId order by p.name, p.id
+            """)
+    List<com.pahal.billingApp.dto.OperationalReportDTO.StockRow> findStockReportRows(
+            @Param("tenantId") String tenantId);
+
     Product findByName(String ProductName);
     // Standard JPA methods like findById, save, and delete will now
     // all be tenant-aware thanks to our Filter and Aspect.
@@ -23,6 +32,8 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     Product findByBarcode(String barcode);
 
     Optional<Product> findByIdAndTenantId(Long id, String tenantId);
+
+    Optional<Product> findByBarcodeAndTenantId(String barcode, String tenantId);
 
     List<Product> findBySupplierId(Long supplierId);
 

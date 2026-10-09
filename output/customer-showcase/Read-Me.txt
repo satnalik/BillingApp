@@ -1,0 +1,14 @@
+PAHAL RETAIL CUSTOMER SHOWCASE
+
+Double-click Pahal-Retail-Customer-Showcase.html in a modern browser.
+The six tabs show existing application components using fictional demo records.
+Use Presentation view to enlarge the application area.
+The showcase works offline and needs no Java, PostgreSQL, Node or application installation.
+Business writes are disabled; no real backend is contacted.
+Pahal-Retail-Product-Overview.pdf is the shareable companion brochure.
+
+Product features depend on the licensed plan. No prices are published in this material.
+Automatic backup, LAN access, automated GST filing and e-invoice generation are not advertised as available.
+This tour is not a deployed billing application or a replacement for customer-machine acceptance testing.
+
+Contact: meankitsatnalika@gmail.com | +91 96093 33137

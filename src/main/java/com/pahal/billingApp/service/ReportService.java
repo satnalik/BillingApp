@@ -16,6 +16,8 @@ import com.pahal.billingApp.repository.OrderRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -85,7 +87,8 @@ public class ReportService {
         return report;
     }
 
-    @Cacheable(cacheNames = "reports", key = "T(com.pahal.billingApp.context.TenantContext).getCurrentTenant() + ':productSales:' + #from + ':' + #to + ':' + #productName + ':' + #barcode + ':' + #category + ':' + #salesmanId")
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.ADVANCED_REPORTS)
     public ProductSalesReportResponse buildProductSalesReport(
             LocalDate from,
             LocalDate to,
@@ -95,11 +98,12 @@ public class ReportService {
             String salesmanId) {
         LocalDate startDay = from != null ? from : LocalDate.now();
         LocalDate endDay = to != null ? to : startDay;
+        if (startDay.isAfter(endDay)) throw new IllegalArgumentException("From date must be on or before To date.");
         LocalDateTime start = startDay.atStartOfDay();
         LocalDateTime end = endDay.plusDays(1).atStartOfDay();
 
         List<ProductSalesReportResponse.ProductSalesItem> items = new ArrayList<>();
-        String tenantId = TenantContext.getCurrentTenant();
+        String tenantId = StockService.requireTenant();
         String normalizedProductName = blankToNull(productName);
         String normalizedBarcode = blankToNull(barcode);
         String normalizedCategory = blankToNull(category);
@@ -134,6 +138,7 @@ public class ReportService {
         }
 
         ProductSalesReportResponse response = new ProductSalesReportResponse();
+        response.setGeneratedAt(LocalDateTime.now());
         response.setPeriodStart(start.toString());
         response.setPeriodEnd(end.toString());
         response.setItems(items);

@@ -10,7 +10,7 @@ import lombok.ToString;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "bill_payments")
+@Table(name = "bill_payments", indexes = @Index(name = "idx_bill_payments_shift", columnList = "shift_id, id"))
 @Getter
 @Setter
 @ToString(exclude = "bill")
@@ -40,6 +40,10 @@ public class BillPayment {
      * Optional reference (UPI txn id, card auth code, etc.)
      */
     private String reference;
+
+    /** The shift that actually collected/refunded this payment, including later due collections. */
+    private Long shiftId;
+    private String cashierUserId;
 
     @Column(nullable = false)
     private LocalDateTime createdAt;

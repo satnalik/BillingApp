@@ -13,6 +13,7 @@ public class SupplierService {
     @Autowired
     private SupplierRepository supplierRepository;
 
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PURCHASES)
     public Supplier createSupplier(Supplier supplier) {
         normalizeSupplier(supplier);
         return supplierRepository.save(supplier);
@@ -26,6 +27,7 @@ public class SupplierService {
         return supplierRepository.findByNameContainingIgnoreCase(name);
     }
 
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PURCHASES)
     public Supplier updateSupplier(Long id, Supplier request, String tenantId) {
         Supplier supplier = supplierRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new RuntimeException("Supplier not found"));
@@ -43,6 +45,7 @@ public class SupplierService {
         return supplierRepository.save(supplier);
     }
 
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PURCHASES)
     public Supplier setActiveStatus(Long id, String tenantId, boolean active) {
         Supplier supplier = supplierRepository.findByIdAndTenantId(id, tenantId)
                 .orElseThrow(() -> new RuntimeException("Supplier not found"));

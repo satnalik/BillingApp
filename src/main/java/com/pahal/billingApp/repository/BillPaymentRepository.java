@@ -10,6 +10,9 @@ import java.util.List;
 
 public interface BillPaymentRepository extends JpaRepository<BillPayment, Long> {
 
+    @Query("select p from BillPayment p join fetch p.bill b where p.shiftId = :shiftId and b.tenantId = :tenantId order by p.id asc")
+    List<BillPayment> findShiftPayments(@Param("shiftId") Long shiftId, @Param("tenantId") String tenantId);
+
     @Query("""
             select p
             from BillPayment p

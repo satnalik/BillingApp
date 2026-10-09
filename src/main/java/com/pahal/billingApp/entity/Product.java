@@ -72,6 +72,8 @@ public class Product {
     private String category;
     private String hsnCode;
     private Double gstRate;
+    @Column(length = 20) private String taxCategory;
+    @Column(length = 8) private String unitCode;
 
     @Column(name = "tenant_id", nullable = false)
     private String tenantId;

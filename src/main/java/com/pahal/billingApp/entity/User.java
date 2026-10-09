@@ -34,4 +34,6 @@ public class User {
     @Column(name = "tenant_id")
     private String tenantId; // Link to their specific store
     private String name;
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private boolean active = true;
 }

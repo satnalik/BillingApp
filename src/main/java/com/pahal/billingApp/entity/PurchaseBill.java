@@ -43,7 +43,7 @@ import java.util.Set;
 })
 @Getter
 @Setter
-@ToString(exclude = { "supplier", "items", "payments" })
+@ToString(exclude = { "supplier", "items", "payments", "returns" })
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class PurchaseBill {
@@ -69,6 +69,8 @@ public class PurchaseBill {
     private Double totalAmount;
     private Double paidAmount;
     private Double dueAmount;
+    private Double returnedAmount = 0.0;
+    private Double refundedAmount = 0.0;
 
     @Enumerated(EnumType.STRING)
     private PurchaseStatus status = PurchaseStatus.ACTIVE;
@@ -92,7 +94,13 @@ public class PurchaseBill {
 
     @OneToMany(mappedBy = "purchaseBill", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @OrderBy("id ASC")
+    @org.hibernate.annotations.BatchSize(size = 50)
     private Set<PurchasePayment> payments = new LinkedHashSet<>();
+
+    @OneToMany(mappedBy = "purchaseBill", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @OrderBy("id ASC")
+    @org.hibernate.annotations.BatchSize(size = 50)
+    private Set<PurchaseReturn> returns = new LinkedHashSet<>();
 
     @PrePersist
     public void onPrePersist() {

@@ -9,6 +9,7 @@ import com.pahal.billingApp.dto.CreateBillRequest;
 import com.pahal.billingApp.dto.ReturnBillRequest;
 import com.pahal.billingApp.entity.Bill;
 import com.pahal.billingApp.enums.PaymentMethod;
+import com.pahal.billingApp.security.CustomUserDetails;
 import com.pahal.billingApp.service.BillingService;
 import com.pahal.billingApp.service.PdfGeneratorService;
 
@@ -19,11 +20,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,6 +44,19 @@ public class BillController {
 
     @Autowired
     private PdfGeneratorService pdfService;
+    @Autowired private com.pahal.billingApp.service.GstService gst;
+    @Autowired private com.pahal.billingApp.service.GstPdfService gstPdf;
+
+    @GetMapping("/lookup")
+    public BillResponse lookup(@RequestParam String number) { return BillResponseMapper.toResponse(billingService.lookupInvoice(number)); }
+
+    @GetMapping("/{id}/tax-invoice")
+    public ResponseEntity<byte[]> taxInvoice(@PathVariable Long id) {
+        Bill bill = billingService.getBillByIdWithDetails(id);
+        com.pahal.billingApp.entity.GstDocument doc = gst.saleDocument(bill.getId());
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF).header(HttpHeaders.CONTENT_DISPOSITION,
+                ContentDisposition.attachment().filename(doc.getDocumentNumber().replace('/', '-') + ".pdf").build().toString()).body(gstPdf.generate(doc));
+    }
 
     /**
      * 1. Create a New Bill
@@ -49,11 +66,20 @@ public class BillController {
      * - Calculates totals
      * - Saves the bill with the tenant_id from the header
      */
-    @Operation(summary = "Create a New Bill", description = "Creates a new bill with the provided details. Validates products, checks stock, and calculates totals.")
+    @Operation(summary = "Create a New Bill", description = "Requires a UUID requestKey. Repeat the same request to recover its saved invoice without another stock deduction or payment. A key cannot be reused for different details.")
     @PostMapping
-    public ResponseEntity<BillResponse> createBill(@RequestBody CreateBillRequest request) {
-        Bill savedBill = billingService.createBill(request);
+    public ResponseEntity<BillResponse> createBill(@RequestBody CreateBillRequest request,
+                                                   @AuthenticationPrincipal CustomUserDetails principal) {
+        Bill savedBill = billingService.createBill(request, principal.getDisplayName());
         return ResponseEntity.ok(BillResponseMapper.toResponse(savedBill));
+    }
+
+    @Operation(summary = "Recover a bill submission", description = "Finds a saved invoice for this tenant and cashier's request UUID. Waits for an active save of that request to finish. 404 means no committed invoice was found; retry the original request to save it.")
+    @GetMapping("/submissions/{requestKey}")
+    public ResponseEntity<BillResponse> savedSubmission(@PathVariable String requestKey) {
+        return billingService.findSavedSubmission(requestKey)
+                .map(bill -> ResponseEntity.ok(BillResponseMapper.toResponse(bill)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /**
@@ -157,13 +183,27 @@ public class BillController {
 
         HttpHeaders headers = new HttpHeaders();
         // 'inline' opens it in the browser, 'attachment' forces a download
-        headers.add("Content-Disposition", "inline; filename=" + BillResponseMapper.billNumber(bill.getId()) + ".pdf");
+        headers.setContentDisposition(ContentDisposition.inline()
+                .filename(invoiceFileName(bill), StandardCharsets.UTF_8)
+                .build());
 
         return ResponseEntity
                 .ok()
                 .headers(headers)
                 .contentType(MediaType.APPLICATION_PDF)
                 .body(new InputStreamResource(bis));
+    }
+
+    private String invoiceFileName(Bill bill) {
+        String invoiceNumber = bill.getTaxDocumentNumber() == null ? BillResponseMapper.billNumber(bill.getId()) : bill.getTaxDocumentNumber();
+        String customerName = bill.getCustomerName() == null || bill.getCustomerName().isBlank()
+                ? "Walk-in" : bill.getCustomerName().trim();
+        String safeCustomer = customerName
+                .replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_")
+                .replaceAll("\\s+", "_")
+                .replaceAll("^[. ]+|[. ]+$", "");
+        if (safeCustomer.length() > 80) safeCustomer = safeCustomer.substring(0, 80);
+        return invoiceNumber + "_" + safeCustomer + ".pdf";
     }
 }
 
@@ -177,9 +217,15 @@ class BillResponseMapper {
     static BillResponse toResponse(Bill bill) {
         BillResponse r = new BillResponse();
         r.setId(bill.getId());
-        r.setBillNumber(billNumber(bill.getId()));
+        r.setBillNumber(bill.getTaxDocumentNumber() == null ? billNumber(bill.getId()) : bill.getTaxDocumentNumber());
         r.setCustomerName(bill.getCustomerName());
         r.setContactInfo(bill.getContactInfo());
+        r.setCustomerGstin(bill.getCustomerGstin()); r.setCustomerAddress(bill.getCustomerAddress()); r.setPlaceOfSupply(bill.getPlaceOfSupply());
+        r.setDeliveryAddress(bill.getDeliveryAddress());
+        r.setTaxRegistrationMode(bill.getTaxRegistrationMode()); r.setTaxPriceMode(bill.getTaxPriceMode());
+        r.setCashierName(bill.getCashierName());
+        r.setCashierUserId(bill.getCashierUserId());
+        r.setShiftId(bill.getShiftId());
         r.setTotalAmount(bill.getTotalAmount());
         r.setSubTotalAmount(bill.getSubTotalAmount());
         r.setGstApplied(bill.getGstApplied());
@@ -217,6 +263,8 @@ class BillResponseMapper {
                         it.setGstRate(i.getGstRate());
                         it.setTaxableAmount(i.getTaxableAmount());
                         it.setGstAmount(i.getGstAmount());
+                        it.setCgstAmount(i.getCgstAmount()); it.setSgstAmount(i.getSgstAmount()); it.setIgstAmount(i.getIgstAmount());
+                        it.setFinalDiscountAmount(i.getFinalDiscountAmount()); it.setTaxCategory(i.getTaxCategory()); it.setUnitCode(i.getUnitCode());
                         return it;
                     }).toList());
         }

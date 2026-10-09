@@ -6,6 +6,9 @@ import com.pahal.billingApp.dto.AddPurchasePaymentRequest;
 import com.pahal.billingApp.dto.CreatePurchaseBillRequest;
 import com.pahal.billingApp.dto.PurchaseBarcodeLabelResponse;
 import com.pahal.billingApp.dto.PurchaseBillResponse;
+import com.pahal.billingApp.dto.PurchaseReturnDTO;
+import com.pahal.billingApp.service.PurchaseAmounts;
+import com.pahal.billingApp.service.PurchaseReturnService;
 import com.pahal.billingApp.entity.PurchaseBill;
 import com.pahal.billingApp.entity.PurchaseBillItem;
 import com.pahal.billingApp.entity.PurchasePayment;
@@ -36,6 +39,9 @@ public class PurchaseController {
 
     @Autowired
     private PurchaseService purchaseService;
+
+    @Autowired
+    private PurchaseReturnService purchaseReturns;
 
     @Autowired
     private BarcodeLabelPdfService barcodeLabelPdfService;
@@ -78,6 +84,18 @@ public class PurchaseController {
         return ResponseEntity.ok(PurchaseBillResponseMapper.toResponse(purchaseService.addDuePayment(id, request)));
     }
 
+    @Operation(summary = "Return purchase items", description = "Returns stock to the supplier and records a credit, without changing the original invoice.")
+    @PostMapping("/{id}/returns")
+    public PurchaseBillResponse returnItems(@PathVariable Long id, @RequestBody PurchaseReturnDTO.Request request) {
+        return PurchaseBillResponseMapper.toResponse(purchaseReturns.returnItems(id, request));
+    }
+
+    @Operation(summary = "Record supplier refund", description = "Records money actually received against a purchase return credit.")
+    @PostMapping("/{id}/refunds")
+    public PurchaseBillResponse refund(@PathVariable Long id, @RequestBody PurchaseReturnDTO.RefundRequest request) {
+        return PurchaseBillResponseMapper.toResponse(purchaseReturns.recordRefund(id, request));
+    }
+
     @Operation(summary = "Generate Purchase Barcode Labels", description = "Generates missing product barcodes and returns label rows for a purchase bill.")
     @PostMapping("/{id}/barcode-labels/generate")
     public ResponseEntity<PurchaseBarcodeLabelResponse> generateBarcodeLabels(@PathVariable Long id) {
@@ -113,7 +131,16 @@ class PurchaseBillResponseMapper {
         response.setTaxAmount(bill.getTaxAmount());
         response.setTotalAmount(bill.getTotalAmount());
         response.setPaidAmount(bill.getPaidAmount());
-        response.setDueAmount(bill.getDueAmount());
+        response.setDueAmount(bill.getStatus() == PurchaseStatus.CANCELLED ? 0.0 : bill.getDueAmount());
+        response.setReturnedAmount(PurchaseAmounts.value(bill.getReturnedAmount()));
+        response.setRefundedAmount(PurchaseAmounts.value(bill.getRefundedAmount()));
+        response.setNetAmount(PurchaseAmounts.netAmount(bill));
+        response.setSupplierCredit(PurchaseAmounts.credit(bill));
+        response.setReturnStatus(PurchaseAmounts.returnStatus(bill));
+        response.setReturns(bill.getReturns().stream().map(r -> new PurchaseBillResponse.Return(
+                r.getId(), r.getReason(), r.getCreditAmount(), r.getActorName(), r.getCreatedAt(),
+                r.getItems().stream().map(i -> new PurchaseBillResponse.ReturnItem(i.getPurchaseItemId(),
+                        i.getProductId(), i.getProductName(), i.getQuantity(), i.getCreditAmount())).toList())).toList());
         response.setStatus(bill.getStatus() != null ? bill.getStatus() : PurchaseStatus.ACTIVE);
         response.setCancelReason(bill.getCancelReason());
         response.setCancelledAt(bill.getCancelledAt());
@@ -146,17 +173,31 @@ class PurchaseBillResponseMapper {
         if (item.getProduct() != null) {
             response.setProductId(item.getProduct().getId());
         }
+        response.setId(item.getId());
+        response.setReturnedQuantity(PurchaseAmounts.value(item.getReturnedQuantity()));
+        response.setRemainingQuantity(remainingQuantity(item));
+        response.setReturnCreditAmount(PurchaseAmounts.cumulativeCredit(item.getPurchaseBill(), item,
+                PurchaseAmounts.value(item.getQuantity())).doubleValue());
         response.setBarcode(item.getBarcode());
         response.setProductName(item.getProductName());
         response.setQuantity(item.getQuantity());
         response.setPurchasePrice(item.getPurchasePrice());
         response.setSellingPrice(item.getSellingPrice());
         response.setLineTotal(item.getLineTotal());
+        response.setHsnCode(item.getHsnCode()); response.setUnitCode(item.getUnitCode()); response.setTaxCategory(item.getTaxCategory());
+        response.setGstRate(item.getGstRate()); response.setTaxableAmount(item.getTaxableAmount()); response.setGstAmount(item.getGstAmount());
+        response.setCgstAmount(item.getCgstAmount()); response.setSgstAmount(item.getSgstAmount()); response.setIgstAmount(item.getIgstAmount());
         return response;
+    }
+
+    private static double remainingQuantity(PurchaseBillItem item) {
+        return com.pahal.billingApp.service.StockService.round2(PurchaseAmounts.value(item.getQuantity()) - PurchaseAmounts.value(item.getReturnedQuantity()));
     }
 
     private static PurchaseBillResponse.Payment toPaymentResponse(PurchasePayment payment) {
         PurchaseBillResponse.Payment response = new PurchaseBillResponse.Payment();
+        response.setRefund(Boolean.TRUE.equals(payment.getRefund()));
+        response.setActorName(payment.getActorName());
         response.setMethod(payment.getMethod());
         response.setAmount(payment.getAmount());
         response.setReference(payment.getReference());

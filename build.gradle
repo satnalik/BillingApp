@@ -48,11 +48,78 @@ dependencies {
 	implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5' // For JSON parsing
-	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 }
 
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+// Owner-only tool: excluded from both customer bootJar artifacts. No backend or database starts.
+sourceSets {
+    owner {
+        java.srcDir 'src/owner/java'
+        compileClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    ownerImplementation.extendsFrom implementation
+}
+tasks.register('ownerLicenseManager', JavaExec) {
+    dependsOn tasks.named('ownerClasses'), tasks.named('classes')
+    classpath = sourceSets.owner.runtimeClasspath + sourceSets.main.output
+    mainClass = 'com.pahal.billingApp.owner.OwnerLicenseManager'
+}
+tasks.register('ownerLicenseManagerJar', Jar) {
+    dependsOn tasks.named('ownerClasses'), tasks.named('classes')
+    archiveFileName = 'pahal-license-manager.jar'
+    manifest { attributes 'Main-Class': 'com.pahal.billingApp.owner.OwnerLicenseManager', 'Class-Path': 'lib/jackson-databind.jar lib/jackson-core.jar lib/jackson-annotations.jar' }
+    from(sourceSets.owner.output)
+    from(sourceSets.main.output.classesDirs) { include 'com/pahal/billingApp/licensing/Feature*', 'com/pahal/billingApp/licensing/PlanCatalog*', 'com/pahal/billingApp/licensing/LicenseFormat*' }
+}
+tasks.register('ownerLicenseManagerDist', Sync) {
+    dependsOn tasks.named('ownerLicenseManagerJar')
+    from(tasks.named('ownerLicenseManagerJar'))
+    from(configurations.ownerRuntimeClasspath) {
+        include 'jackson-databind-*.jar', 'jackson-core-*.jar', 'jackson-annotations-*.jar'
+        rename { it.replaceFirst(/-[0-9].*\.jar$/, '.jar') }
+        into 'lib'
+    }
+    from('packaging/owner/Start-License-Manager.cmd')
+    into layout.buildDirectory.dir('owner-license-manager')
+}
+
+// A separate artifact leaves normal development/server packaging unchanged.
+// The Windows packaging script supplies the production React output directory.
+def desktopResources = tasks.register('desktopResources', Sync) {
+	dependsOn tasks.named('classes')
+	from(sourceSets.main.output.resourcesDir) {
+		exclude 'application-local.properties', 'application-qa.properties', 'application-prod.properties'
+	}
+	from({
+		def uiDir = providers.gradleProperty('desktopUiDir').orNull
+		if (uiDir == null || !file("${uiDir}/index.html").exists()) {
+			throw new GradleException('Supply -PdesktopUiDir=<built React dist directory>')
+		}
+		file(uiDir)
+	}) {
+		into 'static'
+	}
+	into layout.buildDirectory.dir('desktop/resources')
+}
+
+tasks.register('desktopBootJar', org.springframework.boot.gradle.tasks.bundling.BootJar) {
+    doFirst {
+        if (!file('src/main/resources/licensing/owner-public-key.der').exists())
+            throw new GradleException('Initialize signing keys in Pahal License Manager and copy its PUBLIC key to src/main/resources/licensing/owner-public-key.der before customer packaging.')
+    }
+	dependsOn desktopResources
+	mainClass = 'com.pahal.billingApp.BillingAppApplication'
+	targetJavaVersion = JavaVersion.VERSION_17
+	archiveFileName = 'pahal-retail-desktop.jar'
+	classpath = sourceSets.main.runtimeClasspath.filter {
+		it != sourceSets.main.output.resourcesDir
+	} + files(desktopResources.map { it.destinationDir })
 }

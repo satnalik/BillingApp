@@ -12,17 +12,18 @@ import com.pahal.billingApp.dto.ReturnBillItemRequest;
 import com.pahal.billingApp.dto.ReturnBillRequest;
 import com.pahal.billingApp.context.TenantContext;
 import com.pahal.billingApp.entity.Bill;
+import com.pahal.billingApp.entity.CashierShift;
 import com.pahal.billingApp.entity.BillItem;
 import com.pahal.billingApp.entity.BillPayment;
-import com.pahal.billingApp.entity.Customer;
 import com.pahal.billingApp.entity.Product;
+import com.pahal.billingApp.entity.StockMovement;
 import com.pahal.billingApp.entity.ProductBarcode;
 import com.pahal.billingApp.entity.Salesman;
 import com.pahal.billingApp.enums.BillStatus;
 import com.pahal.billingApp.enums.PaymentMethod;
+import com.pahal.billingApp.enums.StockMovementType;
 import com.pahal.billingApp.repository.BillRepository;
 import com.pahal.billingApp.repository.BillPaymentRepository;
-import com.pahal.billingApp.repository.CustomerRepository;
 import com.pahal.billingApp.repository.ProductBarcodeRepository;
 import com.pahal.billingApp.repository.ProductRepository;
 import com.pahal.billingApp.repository.SalesManRepository;
@@ -34,6 +35,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -61,6 +63,12 @@ import java.util.stream.Collectors;
 public class BillingService {
 
     @Autowired
+    private CashierShiftService shifts;
+
+    @Autowired
+    private StockService stockService;
+
+    @Autowired
     private ProductRepository productRepository;
 
     @Autowired
@@ -76,7 +84,14 @@ public class BillingService {
     private SalesManRepository salesManRepository;
 
     @Autowired
-    private CustomerRepository customerRepository;
+    private CustomerService customerService;
+
+    @Autowired
+    private BillSubmissionService submissions;
+    @Autowired private GstService gst;
+    @Autowired private com.pahal.billingApp.licensing.ModuleAccessService moduleAccess;
+    @Autowired private com.pahal.billingApp.licensing.TenantLicenseService tenantLicenses;
+    @Autowired private com.pahal.billingApp.licensing.CounterService licensedCounters;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -287,23 +302,46 @@ public class BillingService {
         return predicates.toArray(new Predicate[0]);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     @CacheEvict(cacheNames = "reports", allEntries = true)
     public Bill createBill(CreateBillRequest request) {
-        if (request == null) throw new RuntimeException("Request is required");
+        return createBill(request, null);
+    }
 
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    @CacheEvict(cacheNames = "reports", allEntries = true)
+    public Bill createBill(CreateBillRequest request, String cashierName) {
+        if (request == null) throw new IllegalArgumentException("Request is required");
+
+        var submission = submissions.begin(request);
+        if (submission.existing() != null) {
+            // Initialize the managed collection without replacing it in this write transaction.
+            submission.existing().getPayments().size();
+            return submission.existing();
+        }
+
+        tenantLicenses.lockTenant(moduleAccess.tenant());
+        moduleAccess.require(com.pahal.billingApp.licensing.Feature.BILLING);
+        licensedCounters.requireForNewTransaction();
+        CashierShift shift = shifts.requireOpenForPosting();
+        licensedCounters.requireForBill(shift);
         Bill billRequest = new Bill();
+        billRequest.setCreationRequestKey(submission.key());
+        billRequest.setCreationFingerprint(submission.fingerprint());
+        billRequest.setShiftId(shift.getId());
+        billRequest.setCashierUserId(shift.getCashierUserId());
         billRequest.setCustomerName(request.getCustomerName());
         billRequest.setContactInfo(request.getContactInfo());
+        billRequest.setCashierName(blankToNull(cashierName));
 
         Salesman existingSalesMan = salesManRepository.findById(request.getSalesmanEmployeeId())
-                .orElseThrow(() -> new RuntimeException("Salesman not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Salesman not found"));
         billRequest.setSalesMan(existingSalesMan);
 
         if (request.getItems() == null || request.getItems().isEmpty()) {
-            throw new RuntimeException("At least one item is required");
+            throw new IllegalArgumentException("At least one item is required");
         }
-        createCustomerIfFirstBillEntry(request.getCustomerName(), request.getContactInfo());
+        customerService.ensureBillCustomer(request.getCustomerName(), request.getContactInfo());
 
         if (request.getPayments() != null && !request.getPayments().isEmpty()) {
             List<BillPayment> payments = new ArrayList<>();
@@ -321,8 +359,12 @@ public class BillingService {
         double gstTotal = 0;
 
         List<BillItem> billItems = new ArrayList<>();
-        for (CreateBillItemRequest itemReq : request.getItems()) {
-            ProductResolution resolution = resolveProduct(itemReq);
+        List<ProductResolution> resolutions = request.getItems().stream().map(this::resolveProduct).toList();
+        resolutions.stream().map(resolution -> resolution.product().getId()).distinct().sorted().forEach(stockService::lockProduct);
+        List<StockMovement> stockMovements = new ArrayList<>();
+        for (int index = 0; index < request.getItems().size(); index++) {
+            CreateBillItemRequest itemReq = request.getItems().get(index);
+            ProductResolution resolution = resolutions.get(index);
             Product product = resolution.product();
             double requestedQuantity = normalizeRequestedQuantity(itemReq.getQuantity());
             double effectiveQuantity = round2(requestedQuantity * resolution.quantityPerScan());
@@ -332,13 +374,17 @@ public class BillingService {
             item.setBarcode(resolution.barcodeUsed());
             item.setProductName(product.getName());
             item.setQuantity(effectiveQuantity);
+            Double currentCost = product.getCostPrice();
+            // The product has been locked/refreshed above. Never derive historical cost at report time.
+            if (currentCost != null && Double.isFinite(currentCost) && currentCost >= 0) {
+                item.setUnitCostAtSale(java.math.BigDecimal.valueOf(currentCost)
+                        .setScale(6, java.math.RoundingMode.HALF_UP));
+            }
             item.setDiscount(itemReq.getDiscount() != null ? itemReq.getDiscount() : 0.0);
             item.setUnitSellingPrice(itemReq.getUnitSellingPrice());
 
-            if (nonNull(product.getStockQuantity()) < effectiveQuantity) {
-                throw new RuntimeException("Insufficient stock for: " + product.getName());
-            }
-            product.setStockQuantity(round2(nonNull(product.getStockQuantity()) - effectiveQuantity));
+            stockMovements.add(stockService.changeStock(product, -effectiveQuantity,
+                    StockMovementType.SALE, "Sale", null, null, null));
 
             Double defaultPrice = product.getSellingPrice() != null ? product.getSellingPrice() : product.getPrice();
             double unitSellingPrice = item.getUnitSellingPrice() != null ? item.getUnitSellingPrice() : (defaultPrice != null ? defaultPrice : 0.0);
@@ -369,10 +415,10 @@ public class BillingService {
 
         double instantDiscount = request.getInstantDiscountAmount() != null ? request.getInstantDiscountAmount() : 0.0;
         if (instantDiscount < 0.0) {
-            throw new RuntimeException("Instant discount must be >= 0");
+            throw new IllegalArgumentException("Instant discount must be >= 0");
         }
         if (instantDiscount - grandTotal > 0.0001) {
-            throw new RuntimeException("Instant discount cannot exceed bill total");
+            throw new IllegalArgumentException("Instant discount cannot exceed bill total");
         }
         if (instantDiscount > 0.0001) {
             grandTotal = round2(grandTotal - instantDiscount);
@@ -385,35 +431,30 @@ public class BillingService {
         billRequest.setInstantDiscountAmount(instantDiscount > 0.0001 ? round2(instantDiscount) : 0.0);
         billRequest.setTotalAmount(grandTotal);
 
+        gst.prepareSale(billRequest, request);
+
         applyPayments(billRequest);
 
-        return billRepository.save(billRequest);
+        shifts.assignNewPayments(shift, billRequest);
+        Bill savedBill = billRepository.save(billRequest);
+        gst.postSale(savedBill);
+        for (var movement : stockMovements) {
+            movement.setReferenceId(savedBill.getId());
+            movement.setReference(billNumber(savedBill.getId()));
+        }
+        return savedBill;
     }
 
-    private void createCustomerIfFirstBillEntry(String customerName, String contactInfo) {
-        String contactNumber = blankToNull(contactInfo);
-        if (contactNumber == null) {
-            return;
-        }
-
-        Customer existing = customerRepository.findByContactNumber(contactNumber).orElse(null);
-        if (existing != null) {
-            if (blankToNull(existing.getName()) == null && blankToNull(customerName) != null) {
-                existing.setName(customerName.trim());
-                customerRepository.save(existing);
-            }
-            return;
-        }
-
-        Customer customer = new Customer();
-        customer.setName(blankToNull(customerName));
-        customer.setContactNumber(contactNumber);
-        customerRepository.save(customer);
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public java.util.Optional<Bill> findSavedSubmission(String key) {
+        var existing = submissions.findForCurrentCashier(key);
+        existing.ifPresent(bill -> bill.getPayments().size());
+        return existing;
     }
 
     private ProductResolution resolveProduct(CreateBillItemRequest itemReq) {
         if (itemReq == null) {
-            throw new RuntimeException("Bill item is required");
+            throw new IllegalArgumentException("Bill item is required");
         }
 
         String barcode = blankToNull(itemReq.getBarcode());
@@ -430,7 +471,7 @@ public class BillingService {
 
             Product product = productRepository.findByBarcode(barcode);
             if (product == null) {
-                throw new RuntimeException("Product not found for barcode: " + barcode);
+                throw new IllegalArgumentException("Product not found for barcode: " + barcode);
             }
             assertRequestedProductMatchesBarcode(itemReq.getProductId(), product);
             return new ProductResolution(product, barcode, 1.0);
@@ -443,12 +484,12 @@ public class BillingService {
 
         String productName = blankToNull(itemReq.getProductName());
         if (productName == null) {
-            throw new RuntimeException("Product id, barcode, or product name is required");
+            throw new IllegalArgumentException("Product id, barcode, or product name is required");
         }
 
         Product product = productRepository.findByName(productName);
         if (product == null) {
-            throw new RuntimeException("Product not found: " + productName);
+            throw new IllegalArgumentException("Product not found: " + productName);
         }
         return new ProductResolution(product, null, 1.0);
     }
@@ -457,10 +498,10 @@ public class BillingService {
         String tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null) {
             return productRepository.findById(productId)
-                    .orElseThrow(() -> new RuntimeException("Product not found"));
+                    .orElseThrow(() -> new IllegalArgumentException("Product not found"));
         }
         return productRepository.findByIdAndTenantId(productId, tenantId)
-                .orElseThrow(() -> new RuntimeException("Product not found"));
+                .orElseThrow(() -> new IllegalArgumentException("Product not found"));
     }
 
     private void assertRequestedProductMatchesBarcode(Long requestedProductId, Product product) {
@@ -468,13 +509,13 @@ public class BillingService {
             return;
         }
         if (!requestedProductId.equals(product.getId())) {
-            throw new RuntimeException("Barcode does not belong to requested product");
+            throw new IllegalArgumentException("Barcode does not belong to requested product");
         }
     }
 
     private static double normalizeRequestedQuantity(Double quantity) {
         if (quantity == null || quantity <= 0.0) {
-            throw new RuntimeException("Quantity must be > 0");
+            throw new IllegalArgumentException("Quantity must be > 0");
         }
         return quantity;
     }
@@ -484,7 +525,7 @@ public class BillingService {
             return 1.0;
         }
         if (quantityPerScan <= 0.0) {
-            throw new RuntimeException("Quantity per scan must be > 0");
+            throw new IllegalArgumentException("Quantity per scan must be > 0");
         }
         return quantityPerScan;
     }
@@ -500,6 +541,7 @@ public class BillingService {
 
         // Lock the bill row so concurrent "collect due" submissions (e.g., double-clicks)
         // cannot both observe the same due and record duplicate/over-collections.
+        CashierShift shift = shifts.requireOpenForPosting();
         Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
                 .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
 
@@ -508,7 +550,7 @@ public class BillingService {
         }
 
         double currentDue = bill.getDueAmount() != null ? bill.getDueAmount() : 0.0;
-        double amount = request.getAmount();
+        double amount = CashierShiftService.validatePaymentAmount(request.getAmount());
 
         if (amount - currentDue > 0.0001) {
             throw new RuntimeException("Payment amount exceeds current due");
@@ -533,6 +575,7 @@ public class BillingService {
         bill.getPayments().add(creditAdjustment);
 
         recomputePaidAndDue(bill);
+        shifts.assignNewPayments(shift, bill);
         return billRepository.save(bill);
     }
 
@@ -541,6 +584,7 @@ public class BillingService {
     public Bill cancelBill(Long billId, CancelBillRequest request) {
         if (billId == null) throw new RuntimeException("Bill id is required");
 
+        CashierShift shift = shifts.requireOpenForPosting();
         Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
                 .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
 
@@ -548,16 +592,22 @@ public class BillingService {
             throw new RuntimeException("Bill is already cancelled");
         }
 
+        Map<Long, Double> previousReturns = new LinkedHashMap<>();
+        distinctBillItems(bill).forEach(item -> previousReturns.put(item.getId(), nonNull(item.getReturnedQuantity())));
+
         if (bill.getItems() != null) {
+            distinctBillItems(bill).stream().map(BillItem::getProductId).distinct().sorted().forEach(stockService::lockProduct);
             for (BillItem item : distinctBillItems(bill)) {
                 double netQuantity = netQuantity(item);
                 if (netQuantity <= 0.0001) continue;
                 Product product = findProduct(item.getProductId());
-                product.setStockQuantity(round2(nonNull(product.getStockQuantity()) + netQuantity));
+                stockService.changeStock(product, netQuantity, StockMovementType.SALE_CANCELLED,
+                        "Sale cancelled", request == null ? null : request.getReason(), billNumber(bill.getId()), bill.getId());
                 item.setReturnedQuantity(round2(nonNull(item.getReturnedQuantity()) + netQuantity));
             }
         }
 
+        gst.saleReturn(bill, previousReturns, request == null ? "Cancellation" : request.getReason());
         bill.setSubTotalAmount(0.0);
         bill.setGstApplied(false);
         bill.setGstAmount(0.0);
@@ -567,6 +617,7 @@ public class BillingService {
         bill.setStatus(BillStatus.CANCELLED);
         bill.setCancelReason(request != null ? request.getReason() : null);
         bill.setCancelledAt(LocalDateTime.now());
+        shifts.assignNewPayments(shift, bill);
         return billRepository.save(bill);
     }
 
@@ -579,6 +630,7 @@ public class BillingService {
             throw new RuntimeException("At least one return item is required");
         }
 
+        CashierShift shift = shifts.requireOpenForPosting();
         Bill bill = billRepository.findWithDetailsByIdForUpdate(billId)
                 .orElseThrow(() -> new RuntimeException("Bill not found or access denied"));
 
@@ -586,6 +638,9 @@ public class BillingService {
             throw new RuntimeException("Cannot return items from a cancelled bill");
         }
 
+        Map<Long, Double> previousReturns = new LinkedHashMap<>();
+        distinctBillItems(bill).forEach(item -> previousReturns.put(item.getId(), nonNull(item.getReturnedQuantity())));
+        distinctBillItems(bill).stream().map(BillItem::getProductId).distinct().sorted().forEach(stockService::lockProduct);
         for (ReturnBillItemRequest returnItem : request.getItems()) {
             if (returnItem == null || returnItem.getQuantity() == null || returnItem.getQuantity() <= 0.0) {
                 throw new RuntimeException("Return quantity must be > 0");
@@ -596,10 +651,12 @@ public class BillingService {
                 throw new RuntimeException("Return quantity exceeds sold quantity for: " + billItem.getProductName());
             }
             Product product = findProduct(billItem.getProductId());
-            product.setStockQuantity(round2(nonNull(product.getStockQuantity()) + quantity));
+            stockService.changeStock(product, quantity, StockMovementType.SALE_RETURN,
+                    "Customer return", request.getReason(), billNumber(bill.getId()), bill.getId());
             billItem.setReturnedQuantity(round2(nonNull(billItem.getReturnedQuantity()) + quantity));
         }
 
+        gst.saleReturn(bill, previousReturns, request.getReason());
         recalculateBillTotalsFromNetItems(bill);
         adjustPaymentsToTotal(bill, nonNull(bill.getTotalAmount()), "Bill return");
         bill.setReturnReason(request.getReason());
@@ -609,6 +666,7 @@ public class BillingService {
             bill.setCancelReason(request.getReason());
             bill.setCancelledAt(LocalDateTime.now());
         }
+        shifts.assignNewPayments(shift, bill);
         return billRepository.save(bill);
     }
 
@@ -628,6 +686,17 @@ public class BillingService {
     }
 
     private void recalculateBillTotalsFromNetItems(Bill bill) {
+        if (bill.getTaxRegistrationMode() != null) {
+            double taxable = 0, tax = 0, discount = 0;
+            for (BillItem item : distinctBillItems(bill)) {
+                taxable += remainingTaxValue(item.getTaxableAmount(), item);
+                tax += remainingTaxValue(item.getCgstAmount(), item) + remainingTaxValue(item.getSgstAmount(), item) + remainingTaxValue(item.getIgstAmount(), item);
+                discount += remainingTaxValue(item.getFinalDiscountAmount(), item);
+            }
+            bill.setSubTotalAmount(round2(taxable)); bill.setGstAmount(round2(tax)); bill.setGstApplied(tax > 0);
+            bill.setInstantDiscountAmount(round2(discount)); bill.setTotalAmount(round2(taxable + tax));
+            return;
+        }
         double taxableTotal = 0.0;
         double gstTotal = 0.0;
         if (bill.getItems() != null) {
@@ -651,6 +720,21 @@ public class BillingService {
         bill.setTotalAmount(round2(totalBeforeInstantDiscount - instantDiscount));
     }
 
+    @Transactional(readOnly = true)
+    public Bill lookupInvoice(String number) {
+        Long id = parseBillId(number);
+        if (id == null) throw new IllegalArgumentException("Invoice number is required.");
+        return getBillByIdWithDetails(id);
+    }
+
+    private static double remainingTaxValue(Double amount, BillItem item) {
+        if (item.getQuantity() == null || item.getQuantity() <= 0) return 0;
+        java.math.BigDecimal original = GstCalculator.money(java.math.BigDecimal.valueOf(nonNull(amount)));
+        java.math.BigDecimal reversed = original.multiply(java.math.BigDecimal.valueOf(nonNull(item.getReturnedQuantity())))
+                .divide(java.math.BigDecimal.valueOf(item.getQuantity()), 2, java.math.RoundingMode.HALF_UP);
+        return original.subtract(reversed).doubleValue();
+    }
+
     private void adjustPaymentsToTotal(Bill bill, double newTotal, String referencePrefix) {
         ensurePayments(bill);
 
@@ -668,18 +752,25 @@ public class BillingService {
 
         double excessTotal = round2(effectivePaid - newTotal);
         if (excessTotal > 0.0001) {
+            // Earlier refunds already reduce the amount refundable through each payment mode.
+            Map<PaymentMethod, Double> availableByMethod = new java.util.EnumMap<>(PaymentMethod.class);
+            bill.getPayments().stream().filter(p -> p.getMethod() != null && p.getMethod() != PaymentMethod.CREDIT)
+                    .forEach(p -> availableByMethod.merge(p.getMethod(), nonNull(p.getAmount()), Double::sum));
             for (BillPayment original : bill.getPayments().stream()
                     .filter(p -> p.getMethod() != null && p.getMethod() != PaymentMethod.CREDIT)
                     .filter(p -> nonNull(p.getAmount()) > 0.0001)
                     .sorted(Comparator.comparing(BillPayment::getId, Comparator.nullsLast(Long::compareTo)).reversed())
                     .toList()) {
-                double amount = Math.min(nonNull(original.getAmount()), excessTotal);
+                double available = Math.max(0, round2(availableByMethod.getOrDefault(original.getMethod(), 0.0)));
+                double amount = round2(Math.min(Math.min(nonNull(original.getAmount()), available), excessTotal));
                 if (amount <= 0.0001) continue;
                 BillPayment refund = payment(bill, original.getMethod(), -amount, referencePrefix + " refund adjustment");
                 bill.getPayments().add(refund);
+                availableByMethod.put(original.getMethod(), round2(available - amount));
                 excessTotal = round2(excessTotal - amount);
                 if (excessTotal <= 0.0001) break;
             }
+            if (excessTotal > 0.0001) throw new IllegalArgumentException("Refund cannot be allocated to recorded payments. Review this bill's payment history.");
         }
 
         recomputePaidAndDue(bill);
@@ -770,7 +861,7 @@ public class BillingService {
     private BillRegisterResponse.Item toBillRegisterItem(Bill bill) {
         BillRegisterResponse.Item item = new BillRegisterResponse.Item();
         item.setId(bill.getId());
-        item.setBillNumber(billNumber(bill.getId()));
+        item.setBillNumber(bill.getTaxDocumentNumber() == null ? billNumber(bill.getId()) : bill.getTaxDocumentNumber());
         item.setCreatedAt(bill.getCreatedAt());
         item.setCustomerName(bill.getCustomerName());
         item.setContactInfo(bill.getContactInfo());
@@ -799,8 +890,12 @@ public class BillingService {
         return String.format("INV-%08d", id);
     }
 
-    private static Long parseBillId(String billNo) {
+    private Long parseBillId(String billNo) {
         String value = blankToNull(billNo);
+        if (value != null && value.contains("/")) {
+            return billRepository.findByTenantIdAndTaxDocumentNumber(StockService.requireTenant(), value)
+                    .map(Bill::getId).orElse(-1L);
+        }
         if (value == null) return null;
         String normalized = value.toUpperCase();
         if (normalized.startsWith("INV-")) {
@@ -840,10 +935,10 @@ public class BillingService {
         double sum = 0.0;
         for (BillPayment p : incoming) {
             if (p == null) continue;
-            if (p.getMethod() == null) throw new RuntimeException("Payment method is required");
-            if (p.getAmount() == null) throw new RuntimeException("Payment amount is required");
+            if (p.getMethod() == null) throw new IllegalArgumentException("Payment method is required");
+            if (p.getAmount() == null) throw new IllegalArgumentException("Payment amount is required");
             if (p.getAmount() < 0 && p.getMethod() != PaymentMethod.CREDIT) {
-                throw new RuntimeException("Payment amount must be >= 0");
+                throw new IllegalArgumentException("Payment amount must be >= 0");
             }
             sum += p.getAmount();
         }
@@ -862,7 +957,7 @@ public class BillingService {
         }
 
         if (sum - total > 0.0001) {
-            throw new RuntimeException("Sum of payments exceeds bill total");
+            throw new IllegalArgumentException("Sum of payments exceeds bill total");
         }
 
         double remaining = total - sum;

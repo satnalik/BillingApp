@@ -23,6 +23,9 @@ import java.util.Set;
         @Index(name = "idx_bills_tenant_created_at", columnList = "tenant_id, createdAt"),
         @Index(name = "idx_bills_created_at", columnList = "createdAt"),
         @Index(name = "idx_bills_tenant_salesman", columnList = "tenant_id, salesman_employee_id")
+}, uniqueConstraints = {
+        @UniqueConstraint(name = "uk_bills_tenant_request_key", columnNames = {"tenant_id", "creation_request_key"}),
+        @UniqueConstraint(name = "uk_bills_tenant_tax_number", columnNames = {"tenant_id", "tax_document_number"})
 })
 @Getter
 @Setter
@@ -39,8 +42,27 @@ public class Bill {
     @Version
     private Long version;
 
+    @Column(name = "creation_request_key", length = 36, updatable = false)
+    private String creationRequestKey;
+
+    @Column(name = "creation_fingerprint", length = 64, updatable = false)
+    private String creationFingerprint;
+
     private String customerName;
     private String contactInfo;
+    @Column(length = 16) private String taxDocumentNumber;
+    @Column(length = 15) private String customerGstin;
+    @Column(length = 1000) private String customerAddress;
+    @Column(length = 1000) private String deliveryAddress;
+    @Column(length = 2) private String placeOfSupply;
+    @Column(length = 20) private String taxRegistrationMode;
+    @Column(length = 12) private String taxPriceMode;
+
+    /** Cashier account display name captured when this invoice is created. */
+    @Column(name = "cashier_name", length = 160)
+    private String cashierName;
+    private String cashierUserId;
+    private Long shiftId;
 
     @ManyToOne
     @JoinColumn(name = "salesman_employee_id", referencedColumnName = "employee_id")

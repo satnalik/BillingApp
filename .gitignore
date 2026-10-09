@@ -35,3 +35,7 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# Owner signing authority is stored outside the repository. Never commit copied private keys/licenses.
+owner-private-key*
+*.pahal-license

@@ -56,7 +56,7 @@ public class ProductController {
      * Create or update a product by barcode.
      * Useful for "scan then add details" inventory flow.
      */
-    @Operation(summary = "Upsert Product by Barcode", description = "Creates or updates a product based on its barcode. Useful for 'scan then add details' inventory flow.")
+    @Operation(summary = "Upsert Product by Barcode", description = "Creates a product with recorded opening stock or updates its catalogue details. Existing stock is retained; use /api/inventory/adjustments to change it with a reason.")
     @PostMapping("/barcode")
     public ResponseEntity<Product> upsertByBarcode(@RequestBody Product product) {
         return ResponseEntity.ok(productService.upsertByBarcode(product));

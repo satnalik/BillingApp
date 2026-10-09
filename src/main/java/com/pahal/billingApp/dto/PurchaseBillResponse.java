@@ -24,6 +24,12 @@ public class PurchaseBillResponse {
     private Double totalAmount;
     private Double paidAmount;
     private Double dueAmount;
+    private Double returnedAmount;
+    private Double refundedAmount;
+    private Double netAmount;
+    private Double supplierCredit;
+    private String returnStatus;
+    private List<Return> returns;
     private PurchaseStatus status;
     private String cancelReason;
     private LocalDateTime cancelledAt;
@@ -35,18 +41,37 @@ public class PurchaseBillResponse {
     @Getter
     @Setter
     public static class Item {
+        private Long id;
         private Long productId;
         private String barcode;
         private String productName;
         private Double quantity;
+        private Double returnedQuantity;
+        private Double remainingQuantity;
+        private Double returnCreditAmount;
         private Double purchasePrice;
         private Double sellingPrice;
         private Double lineTotal;
+        private String hsnCode;
+        private String unitCode;
+        private String taxCategory;
+        private Double gstRate;
+        private Double taxableAmount;
+        private Double gstAmount;
+        private Double cgstAmount;
+        private Double sgstAmount;
+        private Double igstAmount;
     }
+
+    public record Return(Long id, String reason, Double creditAmount, String actorName,
+                         LocalDateTime createdAt, List<ReturnItem> items) {}
+    public record ReturnItem(Long purchaseItemId, Long productId, String productName, Double quantity, Double creditAmount) {}
 
     @Getter
     @Setter
     public static class Payment {
+        private Boolean refund;
+        private String actorName;
         private PaymentMethod method;
         private Double amount;
         private String reference;

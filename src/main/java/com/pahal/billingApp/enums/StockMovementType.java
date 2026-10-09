@@ -1,0 +1,6 @@
+package com.pahal.billingApp.enums;
+
+public enum StockMovementType {
+    BALANCE_BROUGHT_FORWARD, OPENING_STOCK, ADJUSTMENT,
+    PURCHASE, PURCHASE_RETURN, PURCHASE_CANCELLED, SALE, SALE_RETURN, SALE_CANCELLED
+}

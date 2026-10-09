@@ -15,10 +15,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final TenantInterceptor tenantInterceptor;
+    private final com.pahal.billingApp.licensing.ModuleInterceptor moduleInterceptor;
 
     // Constructor injection is preferred over @Autowired on fields
-    public WebMvcConfig(TenantInterceptor tenantInterceptor) {
+    public WebMvcConfig(TenantInterceptor tenantInterceptor, com.pahal.billingApp.licensing.ModuleInterceptor moduleInterceptor) {
         this.tenantInterceptor = tenantInterceptor;
+        this.moduleInterceptor = moduleInterceptor;
     }
 
     @Override
@@ -26,6 +28,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(tenantInterceptor)
                 .addPathPatterns("/api/**") // Apply to all your API endpoints
                 .excludePathPatterns("/api/auth/**"); // EXCLUDE login/register so they don't need a Tenant ID
+        registry.addInterceptor(moduleInterceptor).addPathPatterns("/api/**").excludePathPatterns("/api/auth/**", "/api/provisioning/**");
     }
 
     @Value("${app.cors.allowed-origins}")

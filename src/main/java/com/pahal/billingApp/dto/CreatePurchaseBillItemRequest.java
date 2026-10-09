@@ -12,4 +12,8 @@ public class CreatePurchaseBillItemRequest {
     private Double quantity;
     private Double purchasePrice;
     private Double sellingPrice;
+    private String hsnCode;
+    private String unitCode;
+    private String taxCategory;
+    private Double gstRate;
 }

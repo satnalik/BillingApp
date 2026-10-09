@@ -6,8 +6,14 @@ import java.util.List;
 
 @Data
 public class CreateBillRequest {
+    /** One UUID per bill submission; reuse the exact request when retrying. */
+    private String requestKey;
     private String customerName;
     private String contactInfo;
+    private String customerGstin;
+    private String customerAddress;
+    private String deliveryAddress;
+    private String placeOfSupply;
 
     /**
      * Required: salesman employeeId.

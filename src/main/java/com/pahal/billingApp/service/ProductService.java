@@ -25,12 +25,22 @@ public class ProductService {
     @Autowired
     private ProductBarcodeRepository productBarcodeRepository;
 
+    @Autowired
+    private StockService stockService;
+
     @Transactional
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PRODUCTS)
     public Product addNewProduct(Product product){
+        if (product == null || product.getId() != null) {
+            throw new IllegalArgumentException("Create a new product without an existing product ID.");
+        }
+        double openingQuantity = StockService.validateQuantity(product.getStockQuantity() == null ? 0.0 : product.getStockQuantity(), true);
+        product.setStockQuantity(0.0);
         resolveAndApplySupplier(product);
         normalizeSellingPriceFields(product);
         normalizeTaxFields(product);
         Product saved = productRepository.save(product);
+        stockService.recordProductOpening(saved, openingQuantity);
         ensurePrimaryBarcode(saved);
         return saved;
     }
@@ -82,6 +92,7 @@ public class ProductService {
     }
 
     @Transactional
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PRODUCTS)
     public Product upsertByBarcode(Product request) {
         if (request.getBarcode() == null || request.getBarcode().isBlank()) {
             throw new RuntimeException("Barcode is required");
@@ -93,12 +104,13 @@ public class ProductService {
                 .map(ProductBarcode::getProduct)
                 .orElseGet(() -> productRepository.findByBarcode(normalizedBarcode));
         if (existing == null) {
-            resolveAndApplySupplier(request);
-            normalizeSellingPriceFields(request);
-            normalizeTaxFields(request);
-            Product saved = productRepository.save(request);
-            ensurePrimaryBarcode(saved);
-            return saved;
+            return addNewProduct(request);
+        }
+
+        existing = stockService.lockProduct(existing.getId());
+        if (request.getStockQuantity() != null
+                && Math.abs(StockService.validateQuantity(request.getStockQuantity(), true) - StockService.stockQuantity(existing)) > 0.0000001) {
+            throw new IllegalArgumentException("Change stock through Inventory with an adjustment reason. Product editing does not change stock.");
         }
 
         existing.setName(request.getName());
@@ -108,9 +120,9 @@ public class ProductService {
         existing.setMrp(request.getMrp());
         existing.setSellingPrice(request.getSellingPrice());
         existing.setPrice(request.getPrice());
-        existing.setStockQuantity(request.getStockQuantity());
         existing.setHsnCode(request.getHsnCode());
         existing.setGstRate(request.getGstRate());
+        existing.setTaxCategory(request.getTaxCategory()); existing.setUnitCode(request.getUnitCode());
 
         Supplier supplier = resolveSupplier(request.getSupplier());
         existing.setSupplier(supplier);
@@ -134,6 +146,7 @@ public class ProductService {
     }
 
     @Transactional
+    @com.pahal.billingApp.licensing.RequiresFeature(com.pahal.billingApp.licensing.Feature.PRODUCTS)
     public ProductBarcode addBarcode(Long productId, AddProductBarcodeRequest request) {
         if (request == null) {
             throw new RuntimeException("Barcode request is required");

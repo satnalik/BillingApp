@@ -17,6 +17,15 @@ public class BillResponse {
     private String billNumber;
     private String customerName;
     private String contactInfo;
+    private String customerGstin;
+    private String customerAddress;
+    private String deliveryAddress;
+    private String placeOfSupply;
+    private String taxRegistrationMode;
+    private String taxPriceMode;
+    private String cashierName;
+    private String cashierUserId;
+    private Long shiftId;
     private Double totalAmount;
     private Double subTotalAmount;
     private Boolean gstApplied;
@@ -55,6 +64,12 @@ public class BillResponse {
         private Double gstRate;
         private Double taxableAmount;
         private Double gstAmount;
+        private Double cgstAmount;
+        private Double sgstAmount;
+        private Double igstAmount;
+        private Double finalDiscountAmount;
+        private String taxCategory;
+        private String unitCode;
     }
 
     @Data

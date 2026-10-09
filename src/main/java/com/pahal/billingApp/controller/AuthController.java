@@ -1,6 +1,7 @@
 package com.pahal.billingApp.controller;
 
 import com.pahal.billingApp.dto.LoginRequest;
+import com.pahal.billingApp.dto.ChangePasswordRequest;
 import com.pahal.billingApp.entity.User;
 import com.pahal.billingApp.enums.Role;
 import com.pahal.billingApp.repository.UserRepository;
@@ -45,7 +46,7 @@ public class AuthController {
         Optional<User> user = userRepository.findByUserId(request.getUserId());
         if (user.isPresent()) {
             User userData = user.get();
-            if (passwordEncoder.matches(request.getPassword(), userData.getPassword())
+            if (userData.isActive() && passwordEncoder.matches(request.getPassword(), userData.getPassword())
                     && userData.getUserId().equals(request.getUserId())) {
                 String userTenantId = userData.getTenantId();
                 Role role = userData.getRole();
@@ -65,24 +66,26 @@ public class AuthController {
 
     }
 
-    @Operation(summary = "Change Password on First Login", description = "Allows users to change their password on first login. The userId can be provided either via JWT authentication or as a query parameter.")
+    @Operation(summary = "Change Password", description = "Allows the authenticated user to change their own password after verifying the current password.")
     @PostMapping("/change-password")
     public ResponseEntity<?> updateUserPasswordOnFirstLogin(
-            @RequestParam String password,
-            @RequestParam(required = false) String userId,
+            @RequestBody ChangePasswordRequest request,
             @AuthenticationPrincipal CustomUserDetails principal) {
-        String resolvedUserId = principal != null ? principal.getUsername() : userId;
-        if (resolvedUserId == null || resolvedUserId.isBlank()) {
+        if (principal == null) {
             Map<String, Object> body = new HashMap<>();
-            body.put("message", "userId is required (either via JWT auth or userId query param).");
-            return ResponseEntity.badRequest().body(body);
+            body.put("message", "Authentication is required.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body);
         }
 
-        boolean changed = userService.changePasswordForUserId(resolvedUserId, password);
+        if (request == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Request body is required."));
+        }
+        boolean changed = userService.changePasswordForUserId(
+                principal.getUsername(), principal.getTenantId(), request.getCurrentPassword(), request.getNewPassword());
         if (!changed) {
             Map<String, Object> body = new HashMap<>();
-            body.put("message", "User not found with userId: " + resolvedUserId);
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+            body.put("message", "Current password is incorrect.");
+            return ResponseEntity.badRequest().body(body);
         }
 
         return new ResponseEntity<>("Password Updated Successfully.", HttpStatus.OK);

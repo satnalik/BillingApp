@@ -13,6 +13,9 @@ public interface ProductBarcodeRepository extends JpaRepository<ProductBarcode, 
     @EntityGraph(attributePaths = "product")
     Optional<ProductBarcode> findByBarcode(String barcode);
 
+    @EntityGraph(attributePaths = "product")
+    Optional<ProductBarcode> findByBarcodeAndTenantId(String barcode, String tenantId);
+
     List<ProductBarcode> findByProductIdOrderByPrimaryBarcodeDescIdAsc(Long productId);
 
     Optional<ProductBarcode> findFirstByProductIdAndPrimaryBarcodeTrueOrderByIdAsc(Long productId);

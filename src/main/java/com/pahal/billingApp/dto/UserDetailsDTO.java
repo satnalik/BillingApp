@@ -10,4 +10,5 @@ public class UserDetailsDTO {
     private Long id;
     private String userId;
     private Role role;
+    private String tenantId;
 }

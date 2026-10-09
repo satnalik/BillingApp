@@ -1,6 +1,8 @@
 package com.pahal.billingApp.entity;
 
 import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.math.BigDecimal;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
@@ -40,12 +42,23 @@ public class BillItem {
      */
     private Double unitSellingPrice;
 
+    /** Base stock-unit cost captured at sale. Null means unknown, including older invoices. */
+    @JsonIgnore
+    @Column(name = "unit_cost_at_sale", precision = 19, scale = 6, updatable = false)
+    private BigDecimal unitCostAtSale;
+
     private Double priceAtSale;
     private Double discount;
     private String hsnCode;
     private Double gstRate;
     private Double taxableAmount;
     private Double gstAmount;
+    private Double cgstAmount;
+    private Double sgstAmount;
+    private Double igstAmount;
+    private Double finalDiscountAmount;
+    @Column(length = 20) private String taxCategory;
+    @Column(length = 8) private String unitCode;
 
     public Double getNetQuantity() {
         double sold = quantity != null ? quantity : 0.0;

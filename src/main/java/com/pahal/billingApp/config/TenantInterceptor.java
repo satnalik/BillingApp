@@ -29,6 +29,10 @@ public class TenantInterceptor implements HandlerInterceptor {
             String token = authHeader.substring(7);
             // Extract tenantId from the JWT claims
             String tenantId = jwtService.extractTenantId(token);
+            var authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            if (authentication == null || !(authentication.getPrincipal() instanceof com.pahal.billingApp.security.CustomUserDetails user)
+                    || !java.util.Objects.equals(tenantId, user.getTenantId()))
+                throw new org.springframework.security.access.AccessDeniedException("Authenticated tenant identity mismatch.");
 
             if (tenantId != null) {
                 TenantContext.setCurrentTenant(tenantId);

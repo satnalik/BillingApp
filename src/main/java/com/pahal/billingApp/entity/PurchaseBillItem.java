@@ -2,6 +2,7 @@ package com.pahal.billingApp.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Entity;
+import jakarta.persistence.Column;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -39,7 +40,17 @@ public class PurchaseBillItem {
     private String barcode;
     private String productName;
     private Double quantity;
+    private Double returnedQuantity = 0.0;
     private Double purchasePrice;
     private Double sellingPrice;
     private Double lineTotal;
+    private Double taxableAmount;
+    private Double gstAmount;
+    private Double cgstAmount;
+    private Double sgstAmount;
+    private Double igstAmount;
+    private Double gstRate;
+    @Column(length = 8) private String hsnCode;
+    @Column(length = 8) private String unitCode;
+    @Column(length = 20) private String taxCategory;
 }
